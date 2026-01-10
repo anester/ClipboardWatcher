@@ -260,6 +260,18 @@ FakesAssemblies/
 .ntvs_analysis.dat
 node_modules/
 
+# JavaScript/TypeScript build output
+dist/
+build/
+coverage/
+
+# Package manager caches
+.npm/
+.yarn/
+.pnpm-store/
+.pnp.cjs
+.pnp.js
+
 # Visual Studio 6 build log
 *.plg
 

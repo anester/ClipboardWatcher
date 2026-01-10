@@ -1,0 +1,11 @@
+{
+  "name": "clipboard-editor",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "build:monaco": "node scripts/copy-monaco.js"
+  },
+  "dependencies": {
+    "monaco-editor": "^0.52.0"
+  }
+}

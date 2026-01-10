@@ -1,0 +1,121 @@
+@using Microsoft.JSInterop
+@implements IAsyncDisposable
+
+<div @ref="_host" class="@CssClass" style="height:@HeightPx; min-height:120px; width:100%;"></div>
+
+@code {
+    [Inject] private IJSRuntime JS { get; set; } = default!;
+
+    [Parameter] public string Value { get; set; } = string.Empty;
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public string Language { get; set; } = "Text";
+    [Parameter] public bool ReadOnly { get; set; }
+    [Parameter] public int Height { get; set; } = 260;
+    [Parameter] public string CssClass { get; set; } = "monaco-host";
+
+    private ElementReference _host;
+    private IJSObjectReference? _module;
+    private IJSObjectReference? _editor;
+    private DotNetObjectReference<MonacoEditor>? _selfRef;
+    private string? _lastValue;
+    private bool _initialized;
+
+    private string HeightPx => $"{Height}px";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await InitializeAsync();
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!_initialized || _module is null || _editor is null)
+        {
+            return;
+        }
+
+        var mappedLanguage = MapLanguage(Language);
+        await _module.InvokeVoidAsync("setLanguage", _editor, mappedLanguage);
+        await _module.InvokeVoidAsync("setReadOnly", _editor, ReadOnly);
+
+        if (_lastValue != Value)
+        {
+            _lastValue = Value;
+            await _module.InvokeVoidAsync("setValue", _editor, Value ?? string.Empty);
+        }
+    }
+
+    private async Task InitializeAsync()
+    {
+        _module = await JS.InvokeAsync<IJSObjectReference>(
+            "import", "./_content/ClipboardEditor/monacoEditor.js");
+        _selfRef = DotNetObjectReference.Create(this);
+
+        _editor = await _module.InvokeAsync<IJSObjectReference>(
+            "createEditor",
+            _host,
+            new
+            {
+                value = Value ?? string.Empty,
+                language = MapLanguage(Language),
+                readOnly = ReadOnly,
+                automaticLayout = true
+            },
+            _selfRef,
+            "_content/ClipboardEditor");
+
+        _lastValue = Value;
+        _initialized = true;
+    }
+
+    [JSInvokable]
+    public async Task NotifyChange(string value)
+    {
+        if (_lastValue == value)
+        {
+            return;
+        }
+
+        _lastValue = value;
+        await ValueChanged.InvokeAsync(value);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_module is not null && _editor is not null)
+        {
+            await _module.InvokeVoidAsync("disposeEditor", _editor);
+        }
+
+        _selfRef?.Dispose();
+
+        if (_module is not null)
+        {
+            await _module.DisposeAsync();
+        }
+    }
+
+    private static string MapLanguage(string? language)
+    {
+        if (string.IsNullOrWhiteSpace(language))
+        {
+            return "plaintext";
+        }
+
+        return language.Trim() switch
+        {
+            "Text" => "plaintext",
+            "XML" => "xml",
+            "JSON" => "json",
+            "JavaScript" => "javascript",
+            "CSharp" => "csharp",
+            "TypeScript" => "typescript",
+            "Java" => "java",
+            "Python" => "python",
+            _ => language.Trim().ToLowerInvariant()
+        };
+    }
+}

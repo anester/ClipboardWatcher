@@ -1,4 +1,5 @@
 @page "/stored"
+@using System.Text.Json
 
 <PageTitle>Stored</PageTitle>
 
@@ -60,8 +61,21 @@
                         </select>
                     </div>
                     <div class="mb-2">
+                        <label class="form-label">Language</label>
+                        <select class="form-select" @bind="editLanguage">
+                            <option value="Text">Text</option>
+                            <option value="XML">XML</option>
+                            <option value="JSON">JSON</option>
+                            <option value="JavaScript">JavaScript</option>
+                            <option value="CSharp">CSharp</option>
+                            <option value="TypeScript">TypeScript</option>
+                            <option value="Java">Java</option>
+                            <option value="Python">Python</option>
+                        </select>
+                    </div>
+                    <div class="mb-2">
                         <label class="form-label">Content</label>
-                        <textarea class="form-control" rows="7" @bind="editContent"></textarea>
+                        <MonacoEditor Value="@editContent" ValueChanged="OnEditContentChanged" Language="@editLanguage" Height="260" />
                     </div>
                     <div class="d-flex gap-2">
                         <button class="btn btn-success" @onclick="SaveEditAsync" disabled="@busy">Save</button>
@@ -120,6 +134,7 @@
     private string editName = "";
     private int? editHierarchyId;
     private string editContent = "";
+    private string editLanguage = "Text";
     private string? editStatus;
 
     protected override async Task OnInitializedAsync()
@@ -154,6 +169,7 @@
         editName = entry.Name;
         editHierarchyId = entry.HierarchyId;
         editContent = entry.Content;
+        editLanguage = DetectLanguageForEditor(entry.Content);
         editStatus = null;
     }
 
@@ -161,6 +177,11 @@
     {
         editing = null;
         editStatus = null;
+    }
+
+    private void OnEditContentChanged(string value)
+    {
+        editContent = value;
     }
 
     private async Task SaveEditAsync()
@@ -226,6 +247,34 @@
             })
             .OrderBy(g => g.Title == "Root" ? 1 : 0)
             .ThenBy(g => g.Title);
+    }
+
+    private static string DetectLanguageForEditor(string content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return "Text";
+        }
+
+        var trimmed = content.Trim();
+        if (trimmed.StartsWith("{") || trimmed.StartsWith("["))
+        {
+            try
+            {
+                using var _ = JsonDocument.Parse(trimmed);
+                return "JSON";
+            }
+            catch (JsonException)
+            {
+            }
+        }
+
+        if (trimmed.StartsWith("<") && (trimmed.Contains("</") || trimmed.Contains("/>") || trimmed.StartsWith("<?xml", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "XML";
+        }
+
+        return "Text";
     }
 
     private static string Truncate(string content, int max)
