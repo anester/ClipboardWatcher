@@ -1,0 +1,241 @@
+@page "/stored"
+
+<PageTitle>Stored</PageTitle>
+
+<h1>Stored Text</h1>
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <div class="alert alert-danger">@error</div>
+}
+
+<div class="row g-3">
+    <div class="col-12 col-lg-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Filter</h5>
+
+                <div class="mb-2">
+                    <label class="form-label">Hierarchy</label>
+                    <select class="form-select" @bind="selectedHierarchyId" @bind:after="ReloadAsync">
+                        <option value="">(All)</option>
+                        @foreach (var h in hierarchies.OrderBy(h => h.Name))
+                        {
+                            <option value="@h.Id">@h.Name</option>
+                        }
+                    </select>
+                </div>
+
+                <div class="d-flex gap-2">
+                    <button class="btn btn-sm btn-primary" @onclick="ReloadAsync" disabled="@busy">Refresh</button>
+                    <NavLink class="btn btn-sm btn-outline-secondary" href="hierarchies">Manage Hierarchies</NavLink>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12 col-lg-8">
+        <div class="d-flex gap-2 align-items-center mb-3">
+            <button class="btn btn-sm btn-primary" @onclick="ReloadAsync" disabled="@busy">Refresh</button>
+            <span class="text-muted">@stored.Count items</span>
+        </div>
+
+        @if (editing is not null)
+        {
+            <div class="card mb-3">
+                <div class="card-body">
+                    <h5 class="card-title">Edit Stored Text</h5>
+                    <div class="mb-2">
+                        <label class="form-label">Name</label>
+                        <input class="form-control" @bind="editName" />
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">Hierarchy</label>
+                        <select class="form-select" @bind="editHierarchyId">
+                            <option value="">(Root)</option>
+                            @foreach (var h in hierarchies)
+                            {
+                                <option value="@h.Id">@h.Name</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">Content</label>
+                        <textarea class="form-control" rows="7" @bind="editContent"></textarea>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-success" @onclick="SaveEditAsync" disabled="@busy">Save</button>
+                        <button class="btn btn-outline-secondary" @onclick="CancelEdit" disabled="@busy">Cancel</button>
+                    </div>
+                    @if (!string.IsNullOrEmpty(editStatus))
+                    {
+                        <div class="text-muted mt-2">@editStatus</div>
+                    }
+                </div>
+            </div>
+        }
+
+        @foreach (var group in GroupedStored())
+        {
+            <div class="card mb-3">
+                <div class="card-header">
+                    <strong>@group.Title</strong>
+                    <span class="text-muted">(@group.Items.Count)</span>
+                </div>
+                <div class="list-group list-group-flush">
+                    @foreach (var item in group.Items)
+                    {
+                        <div class="list-group-item">
+                            <div class="d-flex justify-content-between align-items-start gap-2">
+                                <div class="flex-grow-1">
+                                    <div class="fw-bold">@item.Name</div>
+                                    <div class="text-muted">@item.CreatedAt.ToLocalTime().ToString("g")</div>
+                                    <div class="text-break" style="white-space: pre-wrap;">@Truncate(item.Content, 400)</div>
+                                </div>
+                                <div class="d-flex gap-2">
+                                    <button class="btn btn-sm btn-outline-primary" @onclick="() => BeginEdit(item)" disabled="@busy">Edit</button>
+                                    <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteStoredAsync(item)" disabled="@busy">Delete</button>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Inject] private ClipboardApiClient Api { get; set; } = default!;
+
+    private bool busy;
+    private string? error;
+
+    private List<HierarchyEntry> hierarchies = [];
+    private List<StoredTextEntry> stored = [];
+
+    private int? selectedHierarchyId;
+
+    private StoredTextEntry? editing;
+    private string editName = "";
+    private int? editHierarchyId;
+    private string editContent = "";
+    private string? editStatus;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        busy = true;
+        error = null;
+        editStatus = null;
+
+        try
+        {
+            hierarchies = await Api.GetHierarchyAsync();
+            stored = await Api.GetStoredTextEntriesAsync(limit: 500, hierarchyId: selectedHierarchyId);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private void BeginEdit(StoredTextEntry entry)
+    {
+        editing = entry;
+        editName = entry.Name;
+        editHierarchyId = entry.HierarchyId;
+        editContent = entry.Content;
+        editStatus = null;
+    }
+
+    private void CancelEdit()
+    {
+        editing = null;
+        editStatus = null;
+    }
+
+    private async Task SaveEditAsync()
+    {
+        if (editing is null)
+        {
+            return;
+        }
+
+        busy = true;
+        editStatus = null;
+        try
+        {
+            await Api.UpdateStoredTextAsync(editing.Id, new UpdateStoredTextRequest(editHierarchyId, editName.Trim(), editContent));
+            editing = null;
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            editStatus = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task DeleteStoredAsync(StoredTextEntry entry)
+    {
+        busy = true;
+        error = null;
+        try
+        {
+            await Api.DeleteStoredTextAsync(entry.Id);
+            if (editing?.Id == entry.Id)
+            {
+                editing = null;
+            }
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private IEnumerable<StoredGroup> GroupedStored()
+    {
+        var hierarchyById = hierarchies.ToDictionary(h => h.Id, h => h.Name);
+        return stored
+            .OrderByDescending(s => s.CreatedAt)
+            .GroupBy(s => s.HierarchyId)
+            .Select(group =>
+            {
+                var title = group.Key is null
+                    ? "Root"
+                    : hierarchyById.TryGetValue(group.Key.Value, out var name) ? name : $"Hierarchy {group.Key.Value}";
+                return new StoredGroup(title, group.ToList());
+            })
+            .OrderBy(g => g.Title == "Root" ? 1 : 0)
+            .ThenBy(g => g.Title);
+    }
+
+    private static string Truncate(string content, int max)
+    {
+        if (content.Length <= max)
+        {
+            return content;
+        }
+        return content[..max] + "…";
+    }
+
+    private sealed record StoredGroup(string Title, List<StoredTextEntry> Items);
+}

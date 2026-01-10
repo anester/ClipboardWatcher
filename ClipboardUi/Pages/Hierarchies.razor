@@ -1,0 +1,383 @@
+@page "/hierarchies"
+
+<PageTitle>Hierarchies</PageTitle>
+
+<h1>Hierarchies</h1>
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <div class="alert alert-danger">@error</div>
+}
+
+<div class="row g-3">
+    <div class="col-12 col-lg-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Create</h5>
+                <div class="mb-2">
+                    <label class="form-label">Name</label>
+                    <input class="form-control" @bind="newName" />
+                </div>
+                <div class="mb-2">
+                    <label class="form-label">Parent</label>
+                    <select class="form-select" @bind="newParentId">
+                        <option value="">(Root)</option>
+                        @foreach (var h in hierarchies.OrderBy(h => h.Name))
+                        {
+                            <option value="@h.Id">@h.Name</option>
+                        }
+                    </select>
+                </div>
+                <button class="btn btn-sm btn-primary" @onclick="CreateAsync" disabled="@busy">Create</button>
+                @if (!string.IsNullOrEmpty(status))
+                {
+                    <div class="text-muted mt-2">@status</div>
+                }
+            </div>
+        </div>
+
+        @if (selected is not null)
+        {
+            <div class="card mt-3">
+                <div class="card-body">
+                    <h5 class="card-title">Selected</h5>
+                    <div class="mb-2">
+                        <label class="form-label">Name</label>
+                        <input class="form-control" @bind="editName" />
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">Parent</label>
+                        <select class="form-select" @bind="editParentId">
+                            <option value="">(Root)</option>
+                            @foreach (var h in hierarchies.Where(h => h.Id != selected.Id).OrderBy(h => h.Name))
+                            {
+                                <option value="@h.Id">@h.Name</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-sm btn-outline-primary" @onclick="UpdateSelectedAsync" disabled="@busy">Update</button>
+                        <button class="btn btn-sm btn-outline-danger" @onclick="DeleteSelectedAsync" disabled="@busy">Delete</button>
+                    </div>
+                    <div class="text-muted mt-2">
+                        Tip: drag a node onto another node to re-parent it, or drop onto “Root” to move it to top-level.
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+
+    <div class="col-12 col-lg-8">
+        <div class="d-flex gap-2 align-items-center mb-2">
+            <button class="btn btn-sm btn-primary" @onclick="ReloadAsync" disabled="@busy">Refresh</button>
+            <span class="text-muted">@hierarchies.Count nodes</span>
+            @if (!string.IsNullOrEmpty(dragStatus))
+            {
+                <span class="text-muted">@dragStatus</span>
+            }
+        </div>
+
+        <div class="card">
+            <div class="card-body">
+                <div class="fw-bold mb-2"
+                     style="padding: 6px; border: 1px dashed #ccc; border-radius: 6px;"
+                     @ondragover:preventDefault="true"
+                     @ondrop="() => DropOnRootAsync()"
+                     @onclick="() => Select(null)">
+                    Root
+                </div>
+
+                @if (treeRoots.Count == 0)
+                {
+                    <p class="text-muted">No hierarchy nodes yet.</p>
+                }
+                else
+                {
+                    <div>
+                        @foreach (var node in treeRoots.OrderBy(n => n.Entry.Name))
+                        {
+                            @RenderNode(node, 0)
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Inject] private ClipboardApiClient Api { get; set; } = default!;
+
+    private bool busy;
+    private string? error;
+    private string? status;
+    private string? dragStatus;
+
+    private List<HierarchyEntry> hierarchies = [];
+    private List<TreeNode> treeRoots = [];
+
+    private int? draggingId;
+
+    private string newName = "";
+    private int? newParentId;
+
+    private HierarchyEntry? selected;
+    private string editName = "";
+    private int? editParentId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        busy = true;
+        error = null;
+        status = null;
+        dragStatus = null;
+
+        try
+        {
+            hierarchies = await Api.GetHierarchyAsync();
+            treeRoots = BuildTree(hierarchies);
+
+            if (selected is not null)
+            {
+                selected = hierarchies.FirstOrDefault(h => h.Id == selected.Id);
+                if (selected is not null)
+                {
+                    editName = selected.Name;
+                    editParentId = selected.ParentId;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task CreateAsync()
+    {
+        if (string.IsNullOrWhiteSpace(newName))
+        {
+            status = "Name is required.";
+            return;
+        }
+
+        busy = true;
+        status = null;
+        try
+        {
+            await Api.CreateHierarchyAsync(new CreateHierarchyRequest(newParentId, newName.Trim()));
+            newName = "";
+            newParentId = null;
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            status = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private void Select(HierarchyEntry? entry)
+    {
+        selected = entry;
+        status = null;
+        dragStatus = null;
+
+        if (entry is null)
+        {
+            editName = "";
+            editParentId = null;
+        }
+        else
+        {
+            editName = entry.Name;
+            editParentId = entry.ParentId;
+        }
+    }
+
+    private async Task UpdateSelectedAsync()
+    {
+        if (selected is null)
+        {
+            return;
+        }
+
+        busy = true;
+        status = null;
+        try
+        {
+            await Api.UpdateHierarchyAsync(selected.Id, new UpdateHierarchyRequest(editParentId, editName.Trim()));
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            status = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task DeleteSelectedAsync()
+    {
+        if (selected is null)
+        {
+            return;
+        }
+
+        busy = true;
+        status = null;
+        try
+        {
+            await Api.DeleteHierarchyAsync(selected.Id);
+            Select(null);
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            status = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private void StartDrag(int id)
+    {
+        draggingId = id;
+        dragStatus = $"Dragging Id {id}…";
+    }
+
+    private async Task DropOnAsync(int targetParentId)
+    {
+        if (draggingId is null)
+        {
+            return;
+        }
+
+        var movingId = draggingId.Value;
+        draggingId = null;
+
+        var moving = hierarchies.FirstOrDefault(h => h.Id == movingId);
+        if (moving is null)
+        {
+            dragStatus = "Drag failed: item no longer exists.";
+            return;
+        }
+
+        busy = true;
+        dragStatus = null;
+        try
+        {
+            await Api.UpdateHierarchyAsync(moving.Id, new UpdateHierarchyRequest(targetParentId, moving.Name));
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            dragStatus = $"Move failed: {ex.Message}";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task DropOnRootAsync()
+    {
+        if (draggingId is null)
+        {
+            return;
+        }
+
+        var movingId = draggingId.Value;
+        draggingId = null;
+
+        var moving = hierarchies.FirstOrDefault(h => h.Id == movingId);
+        if (moving is null)
+        {
+            dragStatus = "Drag failed: item no longer exists.";
+            return;
+        }
+
+        busy = true;
+        dragStatus = null;
+        try
+        {
+            await Api.UpdateHierarchyAsync(moving.Id, new UpdateHierarchyRequest(null, moving.Name));
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            dragStatus = $"Move failed: {ex.Message}";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private RenderFragment RenderNode(TreeNode node, int depth) => builder =>
+    {
+        var seq = 0;
+
+        builder.OpenElement(seq++, "div");
+        builder.AddAttribute(seq++, "style", $"margin-left: {depth * 18}px;");
+
+        builder.OpenElement(seq++, "div");
+        builder.AddAttribute(seq++, "class", $"d-flex align-items-center gap-2 {(selected?.Id == node.Entry.Id ? "border rounded px-2 py-1" : "")}");
+        builder.AddAttribute(seq++, "style", "padding: 4px; border-radius: 6px;");
+        builder.AddAttribute(seq++, "draggable", "true");
+        builder.AddAttribute(seq++, "ondragstart", EventCallback.Factory.Create<DragEventArgs>(this, () => StartDrag(node.Entry.Id)));
+        builder.AddAttribute(seq++, "ondragover:preventDefault", true);
+        builder.AddAttribute(seq++, "ondrop", EventCallback.Factory.Create(this, () => DropOnAsync(node.Entry.Id)));
+        builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => Select(node.Entry)));
+
+        builder.OpenElement(seq++, "span");
+        builder.AddContent(seq++, node.Entry.Name);
+        builder.CloseElement();
+
+        builder.OpenElement(seq++, "span");
+        builder.AddAttribute(seq++, "class", "text-muted small");
+        builder.AddContent(seq++, $"(Id {node.Entry.Id})");
+        builder.CloseElement();
+
+        builder.CloseElement(); // row
+
+        foreach (var child in node.Children.OrderBy(c => c.Entry.Name))
+        {
+            builder.AddContent(seq++, RenderNode(child, depth + 1));
+        }
+
+        builder.CloseElement(); // container
+    };
+
+    private static List<TreeNode> BuildTree(IReadOnlyList<HierarchyEntry> items)
+    {
+        var byParent = items.ToLookup(h => h.ParentId);
+
+        List<TreeNode> BuildChildren(int? parentId)
+        {
+            return byParent[parentId]
+                .Select(child => new TreeNode(child, BuildChildren(child.Id)))
+                .ToList();
+        }
+
+        return BuildChildren(null);
+    }
+
+    private sealed record TreeNode(HierarchyEntry Entry, List<TreeNode> Children);
+}

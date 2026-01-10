@@ -1,0 +1,175 @@
+@page "/captured"
+
+<PageTitle>Captured</PageTitle>
+
+<h1>Captured Clipboard (Text)</h1>
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <div class="alert alert-danger">@error</div>
+}
+else if (captured is null)
+{
+    <p>Loading...</p>
+}
+else
+{
+    <div class="d-flex gap-2 align-items-center mb-3">
+        <button class="btn btn-sm btn-primary" @onclick="ReloadAsync" disabled="@busy">Refresh</button>
+        <span class="text-muted">@captured.Count items</span>
+    </div>
+
+    @if (selectedToSave is not null)
+    {
+        <div class="card mb-3">
+            <div class="card-body">
+                <h5 class="card-title">Save as Stored Text</h5>
+                <div class="mb-2">
+                    <label class="form-label">Name</label>
+                    <input class="form-control" @bind="saveName" />
+                </div>
+                <div class="mb-2">
+                    <label class="form-label">Hierarchy</label>
+                    <select class="form-select" @bind="saveHierarchyId">
+                        <option value="">(Root)</option>
+                        @foreach (var h in hierarchies)
+                        {
+                            <option value="@h.Id">@h.Name</option>
+                        }
+                    </select>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label">Preview</label>
+                    <div class="form-control" style="white-space: pre-wrap; max-height: 140px; overflow:auto;">
+                        @selectedToSave.Content
+                    </div>
+                </div>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-success" @onclick="SaveSelectedAsync" disabled="@busy">Save</button>
+                    <button class="btn btn-outline-secondary" @onclick="CancelSave" disabled="@busy">Cancel</button>
+                </div>
+                @if (!string.IsNullOrEmpty(saveStatus))
+                {
+                    <div class="text-muted mt-2">@saveStatus</div>
+                }
+            </div>
+        </div>
+    }
+
+    <div class="list-group">
+        @foreach (var item in captured)
+        {
+            <div class="list-group-item">
+                <div class="d-flex justify-content-between align-items-start gap-2">
+                    <div class="flex-grow-1">
+                        <div class="fw-bold">@item.CreatedAt.ToLocalTime().ToString("g")</div>
+                        <div class="text-break" style="white-space: pre-wrap;">@Truncate(item.Content, 400)</div>
+                    </div>
+                    <div>
+                        <button class="btn btn-sm btn-outline-primary" @onclick="() => BeginSave(item)" disabled="@busy">Save</button>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Inject] private ClipboardApiClient Api { get; set; } = default!;
+
+    private List<TextEntry>? captured;
+    private List<HierarchyEntry> hierarchies = [];
+    private string? error;
+    private bool busy;
+
+    private TextEntry? selectedToSave;
+    private string saveName = "";
+    private int? saveHierarchyId;
+    private string? saveStatus;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        busy = true;
+        error = null;
+        saveStatus = null;
+
+        try
+        {
+            hierarchies = await Api.GetHierarchyAsync();
+            captured = await Api.GetRecentTextAsync(100);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private void BeginSave(TextEntry item)
+    {
+        selectedToSave = item;
+        saveHierarchyId = null;
+        saveName = BuildDefaultName(item.Content);
+        saveStatus = null;
+    }
+
+    private void CancelSave()
+    {
+        selectedToSave = null;
+        saveStatus = null;
+    }
+
+    private async Task SaveSelectedAsync()
+    {
+        if (selectedToSave is null)
+        {
+            return;
+        }
+
+        busy = true;
+        saveStatus = null;
+        try
+        {
+            var created = await Api.CreateStoredFromClipboardAsync(
+                new CreateStoredFromClipboardRequest(selectedToSave.Id, saveName, saveHierarchyId));
+
+            saveStatus = $"Saved as StoredTextEntries Id {created.Id}.";
+            selectedToSave = null;
+        }
+        catch (Exception ex)
+        {
+            saveStatus = $"Save failed: {ex.Message}";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private static string BuildDefaultName(string content)
+    {
+        var singleLine = content.ReplaceLineEndings(" ").Trim();
+        if (string.IsNullOrWhiteSpace(singleLine))
+        {
+            return "Untitled";
+        }
+        return singleLine.Length > 60 ? singleLine[..60] : singleLine;
+    }
+
+    private static string Truncate(string content, int max)
+    {
+        if (content.Length <= max)
+        {
+            return content;
+        }
+        return content[..max] + "…";
+    }
+}
