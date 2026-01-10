@@ -86,24 +86,31 @@ public class ClipboardStore
         command.ExecuteNonQuery();
     }
 
-    public async Task SaveTextAsync(string content)
+    public async Task<ClipboardTextEntry?> SaveTextAsync(string content)
     {
         if (string.IsNullOrWhiteSpace(content))
         {
-            return;
+            return null;
         }
 
         await using var connection = await OpenConnectionAsync();
 
         await using SqliteTransaction transaction = (SqliteTransaction)await connection.BeginTransactionAsync();
 
+        var createdAt = DateTimeOffset.UtcNow;
+        int id;
         await using (var cmd = connection.CreateCommand())
         {
             cmd.Transaction = transaction;
-            cmd.CommandText = "INSERT INTO TextEntries(Content, CreatedAt) VALUES ($content, $createdAt);";
+            cmd.CommandText =
+                """
+                INSERT INTO TextEntries(Content, CreatedAt)
+                VALUES ($content, $createdAt);
+                SELECT last_insert_rowid();
+                """;
             cmd.Parameters.AddWithValue("$content", content);
-            cmd.Parameters.AddWithValue("$createdAt", DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture));
-            await cmd.ExecuteNonQueryAsync();
+            cmd.Parameters.AddWithValue("$createdAt", createdAt.ToString("O", CultureInfo.InvariantCulture));
+            id = Convert.ToInt32(await cmd.ExecuteScalarAsync());
         }
 
         await using (var trimCmd = connection.CreateCommand())
@@ -114,26 +121,35 @@ public class ClipboardStore
         }
 
         await transaction.CommitAsync();
+
+        return new ClipboardTextEntry(id, content, createdAt);
     }
 
-    public async Task SaveImageAsync(byte[] data)
+    public async Task<ClipboardImageEntry?> SaveImageAsync(byte[] data)
     {
         if (data is not { Length: > 0 })
         {
-            return;
+            return null;
         }
 
         await using var connection = await OpenConnectionAsync();
 
         await using SqliteTransaction transaction = (SqliteTransaction)await connection.BeginTransactionAsync();
 
+        var createdAt = DateTimeOffset.UtcNow;
+        int id;
         await using (var cmd = connection.CreateCommand())
         {
             cmd.Transaction = transaction;
-            cmd.CommandText = "INSERT INTO ImageEntries(Data, CreatedAt) VALUES ($data, $createdAt);";
+            cmd.CommandText =
+                """
+                INSERT INTO ImageEntries(Data, CreatedAt)
+                VALUES ($data, $createdAt);
+                SELECT last_insert_rowid();
+                """;
             cmd.Parameters.AddWithValue("$data", data);
-            cmd.Parameters.AddWithValue("$createdAt", DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture));
-            await cmd.ExecuteNonQueryAsync();
+            cmd.Parameters.AddWithValue("$createdAt", createdAt.ToString("O", CultureInfo.InvariantCulture));
+            id = Convert.ToInt32(await cmd.ExecuteScalarAsync());
         }
 
         await using (var trimCmd = connection.CreateCommand())
@@ -144,6 +160,8 @@ public class ClipboardStore
         }
 
         await transaction.CommitAsync();
+
+        return new ClipboardImageEntry(id, data, createdAt);
     }
 
     public async Task<ClipboardTextEntry?> GetLatestTextAsync()

@@ -1,3 +1,4 @@
+using System;
 using System.Net.Http.Json;
 
 namespace ClipboardUi.Services;
@@ -10,6 +11,8 @@ public sealed class ClipboardApiClient
     {
         _http = http;
     }
+
+    public Uri BaseAddress => _http.BaseAddress ?? throw new InvalidOperationException("Api base address missing.");
 
     public async Task<List<TextEntry>> GetRecentTextAsync(int limit)
     {

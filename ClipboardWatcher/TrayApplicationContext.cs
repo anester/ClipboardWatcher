@@ -48,11 +48,25 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         if (!string.IsNullOrWhiteSpace(snapshot.Text))
         {
-            _ = Task.Run(() => _store.SaveTextAsync(snapshot.Text!));
+            _ = Task.Run(async () =>
+            {
+                var entry = await _store.SaveTextAsync(snapshot.Text!);
+                if (entry is not null)
+                {
+                    await _apiHost.NotifyTextEntryAsync(entry);
+                }
+            });
         }
         else if (snapshot.ImageBytes is { Length: > 0 })
         {
-            _ = Task.Run(() => _store.SaveImageAsync(snapshot.ImageBytes));
+            _ = Task.Run(async () =>
+            {
+                var entry = await _store.SaveImageAsync(snapshot.ImageBytes);
+                if (entry is not null)
+                {
+                    await _apiHost.NotifyImageEntryAsync(entry);
+                }
+            });
         }
     }
 

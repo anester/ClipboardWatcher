@@ -1,4 +1,9 @@
 @page "/captured"
+@implements IAsyncDisposable
+@using System.IO
+@using System.Net.WebSockets
+@using System.Text
+@using System.Text.Json
 
 <PageTitle>Captured</PageTitle>
 
@@ -77,6 +82,7 @@ else
 @code {
     [Inject] private ClipboardApiClient Api { get; set; } = default!;
 
+    private const int MaxItems = 100;
     private List<TextEntry>? captured;
     private List<HierarchyEntry> hierarchies = [];
     private string? error;
@@ -87,9 +93,14 @@ else
     private int? saveHierarchyId;
     private string? saveStatus;
 
+    private ClientWebSocket? _socket;
+    private CancellationTokenSource? _wsCts;
+    private Task? _wsTask;
+
     protected override async Task OnInitializedAsync()
     {
         await ReloadAsync();
+        _wsTask = StartWebSocketAsync();
     }
 
     private async Task ReloadAsync()
@@ -101,7 +112,7 @@ else
         try
         {
             hierarchies = await Api.GetHierarchyAsync();
-            captured = await Api.GetRecentTextAsync(100);
+            captured = await Api.GetRecentTextAsync(MaxItems);
         }
         catch (Exception ex)
         {
@@ -111,6 +122,100 @@ else
         {
             busy = false;
         }
+    }
+
+    private async Task StartWebSocketAsync()
+    {
+        _wsCts = new CancellationTokenSource();
+        _socket = new ClientWebSocket();
+
+        try
+        {
+            await _socket.ConnectAsync(BuildWebSocketUri(), _wsCts.Token);
+            await ReceiveLoopAsync(_socket, _wsCts.Token);
+        }
+        catch (Exception ex)
+        {
+            error = $"WebSocket connection failed: {ex.Message}";
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private Uri BuildWebSocketUri()
+    {
+        var baseUri = Api.BaseAddress;
+        var scheme = baseUri.Scheme == "https" ? "wss" : "ws";
+        var builder = new UriBuilder(baseUri)
+        {
+            Scheme = scheme,
+            Path = "/ws/clipboard",
+            Query = ""
+        };
+        return builder.Uri;
+    }
+
+    private async Task ReceiveLoopAsync(ClientWebSocket socket, CancellationToken cancellationToken)
+    {
+        var buffer = new byte[4096];
+
+        while (!cancellationToken.IsCancellationRequested && socket.State == WebSocketState.Open)
+        {
+            using var stream = new MemoryStream();
+            WebSocketReceiveResult result;
+
+            do
+            {
+                result = await socket.ReceiveAsync(buffer, cancellationToken);
+                if (result.MessageType == WebSocketMessageType.Close)
+                {
+                    return;
+                }
+
+                stream.Write(buffer, 0, result.Count);
+            }
+            while (!result.EndOfMessage);
+
+            if (result.MessageType != WebSocketMessageType.Text)
+            {
+                continue;
+            }
+
+            var json = Encoding.UTF8.GetString(stream.ToArray());
+            await HandleWebSocketMessageAsync(json);
+        }
+    }
+
+    private async Task HandleWebSocketMessageAsync(string json)
+    {
+        WebSocketClipboardEvent? message;
+        try
+        {
+            message = JsonSerializer.Deserialize<WebSocketClipboardEvent>(json,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch
+        {
+            return;
+        }
+
+        if (message is null || message.Type != "text" || string.IsNullOrWhiteSpace(message.Content))
+        {
+            return;
+        }
+
+        captured ??= [];
+        if (captured.Any(item => item.Id == message.Id))
+        {
+            return;
+        }
+
+        captured.Insert(0, new TextEntry(message.Id, message.Content, message.CreatedAt));
+        if (captured.Count > MaxItems)
+        {
+            captured.RemoveRange(MaxItems, captured.Count - MaxItems);
+        }
+
+        await InvokeAsync(StateHasChanged);
     }
 
     private void BeginSave(TextEntry item)
@@ -170,6 +275,35 @@ else
         {
             return content;
         }
-        return content[..max] + "…";
+        return content[..max] + ".";
     }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_wsCts is not null)
+        {
+            _wsCts.Cancel();
+        }
+
+        if (_socket is not null)
+        {
+            try
+            {
+                if (_socket.State == WebSocketState.Open)
+                {
+                    await _socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", CancellationToken.None);
+                }
+            }
+            catch
+            {
+                // ignore shutdown errors
+            }
+
+            _socket.Dispose();
+        }
+
+        _wsCts?.Dispose();
+    }
+
+    private sealed record WebSocketClipboardEvent(string Type, int Id, string? Content, string? Base64Data, DateTimeOffset CreatedAt);
 }

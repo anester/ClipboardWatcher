@@ -1,6 +1,10 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.WebSockets;
+using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
@@ -17,6 +21,7 @@ public sealed class ApiHost
 {
     private readonly ClipboardStore _store;
     private readonly int _port;
+    private readonly WebSocketHub _webSocketHub = new();
 
     public ApiHost(ClipboardStore store, int port)
     {
@@ -43,7 +48,10 @@ public sealed class ApiHost
         });
 
         var app = builder.Build();
+        app.UseWebSockets();
         app.UseCors();
+
+        app.Map("/ws/clipboard", async context => await _webSocketHub.AcceptAsync(context));
 
         app.MapGet("/api/text/latest", async Task<IResult> () =>
         {
@@ -195,6 +203,32 @@ public sealed class ApiHost
         return app.RunAsync(cancellationToken);
     }
 
+    public Task NotifyTextEntryAsync(ClipboardTextEntry entry, CancellationToken cancellationToken = default)
+    {
+        var payload = JsonSerializer.Serialize(new
+        {
+            type = "text",
+            id = entry.Id,
+            content = entry.Content,
+            createdAt = entry.CreatedAt
+        });
+
+        return _webSocketHub.BroadcastAsync(payload, cancellationToken);
+    }
+
+    public Task NotifyImageEntryAsync(ClipboardImageEntry entry, CancellationToken cancellationToken = default)
+    {
+        var payload = JsonSerializer.Serialize(new
+        {
+            type = "image",
+            id = entry.Id,
+            base64Data = Convert.ToBase64String(entry.Data),
+            createdAt = entry.CreatedAt
+        });
+
+        return _webSocketHub.BroadcastAsync(payload, cancellationToken);
+    }
+
     private static ImageDto ToImageDto(ClipboardImageEntry entry) =>
         new(entry.Id, entry.CreatedAt, Convert.ToBase64String(entry.Data));
 
@@ -205,4 +239,89 @@ public sealed class ApiHost
 
     private sealed record CreateStoredFromClipboardRequest(int TextEntryId, string Name, int? HierarchyId);
     private sealed record UpdateStoredTextRequest(int? HierarchyId, string Name, string Content);
+
+    private sealed class WebSocketHub
+    {
+        private readonly ConcurrentDictionary<Guid, WebSocket> _sockets = new();
+
+        public async Task AcceptAsync(HttpContext context)
+        {
+            if (!context.WebSockets.IsWebSocketRequest)
+            {
+                context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                return;
+            }
+
+            var socket = await context.WebSockets.AcceptWebSocketAsync();
+            var id = Guid.NewGuid();
+            _sockets.TryAdd(id, socket);
+
+            try
+            {
+                await ReceiveLoopAsync(socket, context.RequestAborted);
+            }
+            finally
+            {
+                _sockets.TryRemove(id, out _);
+                if (socket.State == WebSocketState.Open)
+                {
+                    await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", CancellationToken.None);
+                }
+
+                socket.Dispose();
+            }
+        }
+
+        public async Task BroadcastAsync(string message, CancellationToken cancellationToken = default)
+        {
+            if (_sockets.IsEmpty)
+            {
+                return;
+            }
+
+            var payload = Encoding.UTF8.GetBytes(message);
+            var segment = new ArraySegment<byte>(payload);
+
+            foreach (var pair in _sockets)
+            {
+                var socket = pair.Value;
+                if (socket.State != WebSocketState.Open)
+                {
+                    _sockets.TryRemove(pair.Key, out _);
+                    continue;
+                }
+
+                try
+                {
+                    await socket.SendAsync(segment, WebSocketMessageType.Text, true, cancellationToken);
+                }
+                catch
+                {
+                    _sockets.TryRemove(pair.Key, out _);
+                }
+            }
+        }
+
+        private static async Task ReceiveLoopAsync(WebSocket socket, CancellationToken cancellationToken)
+        {
+            var buffer = new byte[4096];
+            while (!cancellationToken.IsCancellationRequested && socket.State == WebSocketState.Open)
+            {
+                WebSocketReceiveResult result;
+                try
+                {
+                    result = await socket.ReceiveAsync(buffer, cancellationToken);
+                }
+                catch
+                {
+                    break;
+                }
+
+                if (result.MessageType == WebSocketMessageType.Close)
+                {
+                    break;
+                }
+            }
+        }
+    }
 }
