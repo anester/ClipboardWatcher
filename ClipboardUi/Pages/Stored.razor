@@ -1,6 +1,4 @@
 @page "/stored"
-@using System.Text.Json
-
 <PageTitle>Stored</PageTitle>
 
 <h1>Stored Text</h1>
@@ -41,54 +39,6 @@
             <span class="text-muted">@stored.Count items</span>
         </div>
 
-        @if (editing is not null)
-        {
-            <div class="card mb-3">
-                <div class="card-body">
-                    <h5 class="card-title">Edit Stored Text</h5>
-                    <div class="mb-2">
-                        <label class="form-label">Name</label>
-                        <input class="form-control" @bind="editName" />
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label">Hierarchy</label>
-                        <select class="form-select" @bind="editHierarchyId">
-                            <option value="">(Root)</option>
-                            @foreach (var h in hierarchies)
-                            {
-                                <option value="@h.Id">@h.Name</option>
-                            }
-                        </select>
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label">Language</label>
-                        <select class="form-select" @bind="editLanguage">
-                            <option value="Text">Text</option>
-                            <option value="XML">XML</option>
-                            <option value="JSON">JSON</option>
-                            <option value="JavaScript">JavaScript</option>
-                            <option value="CSharp">CSharp</option>
-                            <option value="TypeScript">TypeScript</option>
-                            <option value="Java">Java</option>
-                            <option value="Python">Python</option>
-                        </select>
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label">Content</label>
-                        <MonacoEditor Value="@editContent" ValueChanged="OnEditContentChanged" Language="@editLanguage" Height="260" />
-                    </div>
-                    <div class="d-flex gap-2">
-                        <button class="btn btn-success" @onclick="SaveEditAsync" disabled="@busy">Save</button>
-                        <button class="btn btn-outline-secondary" @onclick="CancelEdit" disabled="@busy">Cancel</button>
-                    </div>
-                    @if (!string.IsNullOrEmpty(editStatus))
-                    {
-                        <div class="text-muted mt-2">@editStatus</div>
-                    }
-                </div>
-            </div>
-        }
-
         @foreach (var group in GroupedStored())
         {
             <div class="card mb-3">
@@ -107,7 +57,7 @@
                                     <div class="text-break" style="white-space: pre-wrap;">@Truncate(item.Content, 400)</div>
                                 </div>
                                 <div class="d-flex gap-2">
-                                    <button class="btn btn-sm btn-outline-primary" @onclick="() => BeginEdit(item)" disabled="@busy">Edit</button>
+                                    <button class="btn btn-sm btn-outline-primary" @onclick="() => EditStored(item)" disabled="@busy">Edit</button>
                                     <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteStoredAsync(item)" disabled="@busy">Delete</button>
                                 </div>
                             </div>
@@ -121,6 +71,7 @@
 
 @code {
     [Inject] private ClipboardApiClient Api { get; set; } = default!;
+    [Inject] private NavigationManager Nav { get; set; } = default!;
 
     private bool busy;
     private string? error;
@@ -129,13 +80,6 @@
     private List<StoredTextEntry> stored = [];
 
     private int? selectedHierarchyId;
-
-    private StoredTextEntry? editing;
-    private string editName = "";
-    private int? editHierarchyId;
-    private string editContent = "";
-    private string editLanguage = "Text";
-    private string? editStatus;
 
     protected override async Task OnInitializedAsync()
     {
@@ -146,7 +90,6 @@
     {
         busy = true;
         error = null;
-        editStatus = null;
 
         try
         {
@@ -163,52 +106,16 @@
         }
     }
 
-    private void BeginEdit(StoredTextEntry entry)
+    private void EditStored(StoredTextEntry entry)
     {
-        editing = entry;
-        editName = entry.Name;
-        editHierarchyId = entry.HierarchyId;
-        editContent = entry.Content;
-        editLanguage = string.IsNullOrWhiteSpace(entry.Language)
-            ? DetectLanguageForEditor(entry.Content)
-            : entry.Language;
-        editStatus = null;
-    }
-
-    private void CancelEdit()
-    {
-        editing = null;
-        editStatus = null;
-    }
-
-    private void OnEditContentChanged(string value)
-    {
-        editContent = value;
-    }
-
-    private async Task SaveEditAsync()
-    {
-        if (editing is null)
+        var returnUrl = Nav.ToBaseRelativePath(Nav.Uri);
+        if (string.IsNullOrWhiteSpace(returnUrl))
         {
-            return;
+            returnUrl = "stored";
         }
 
-        busy = true;
-        editStatus = null;
-        try
-        {
-            await Api.UpdateStoredTextAsync(editing.Id, new UpdateStoredTextRequest(editHierarchyId, editName.Trim(), editContent, editLanguage));
-            editing = null;
-            await ReloadAsync();
-        }
-        catch (Exception ex)
-        {
-            editStatus = ex.Message;
-        }
-        finally
-        {
-            busy = false;
-        }
+        var encoded = Uri.EscapeDataString(returnUrl);
+        Nav.NavigateTo($"/clip/{entry.Id}?returnUrl={encoded}");
     }
 
     private async Task DeleteStoredAsync(StoredTextEntry entry)
@@ -218,10 +125,6 @@
         try
         {
             await Api.DeleteStoredTextAsync(entry.Id);
-            if (editing?.Id == entry.Id)
-            {
-                editing = null;
-            }
             await ReloadAsync();
         }
         catch (Exception ex)
@@ -249,34 +152,6 @@
             })
             .OrderBy(g => g.Title == "Root" ? 1 : 0)
             .ThenBy(g => g.Title);
-    }
-
-    private static string DetectLanguageForEditor(string content)
-    {
-        if (string.IsNullOrWhiteSpace(content))
-        {
-            return "Text";
-        }
-
-        var trimmed = content.Trim();
-        if (trimmed.StartsWith("{") || trimmed.StartsWith("["))
-        {
-            try
-            {
-                using var _ = JsonDocument.Parse(trimmed);
-                return "JSON";
-            }
-            catch (JsonException)
-            {
-            }
-        }
-
-        if (trimmed.StartsWith("<") && (trimmed.Contains("</") || trimmed.Contains("/>") || trimmed.StartsWith("<?xml", StringComparison.OrdinalIgnoreCase)))
-        {
-            return "XML";
-        }
-
-        return "Text";
     }
 
     private static string Truncate(string content, int max)

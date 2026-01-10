@@ -1,7 +1,7 @@
 @using Microsoft.JSInterop
 @implements IAsyncDisposable
 
-<div @ref="_host" class="@CssClass" style="height:@HeightPx; min-height:120px; width:100%;"></div>
+<div @ref="_host" class="@CssClass" style="height:@ResolvedHeight; min-height:120px; width:100%;"></div>
 
 @code {
     [Inject] private IJSRuntime JS { get; set; } = default!;
@@ -11,6 +11,7 @@
     [Parameter] public string Language { get; set; } = "Text";
     [Parameter] public bool ReadOnly { get; set; }
     [Parameter] public int Height { get; set; } = 260;
+    [Parameter] public string? HeightCss { get; set; }
     [Parameter] public string CssClass { get; set; } = "monaco-host";
 
     private ElementReference _host;
@@ -21,6 +22,7 @@
     private bool _initialized;
 
     private string HeightPx => $"{Height}px";
+    private string ResolvedHeight => string.IsNullOrWhiteSpace(HeightCss) ? HeightPx : HeightCss!;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {

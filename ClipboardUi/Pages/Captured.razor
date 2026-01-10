@@ -93,13 +93,14 @@ else
                         </div>
                             <div class="text-break" style="white-space: pre-wrap;">@Truncate(item.Content, 400)</div>
                         </div>
-                        <div>
-                            <button class="btn btn-sm btn-outline-primary" @onclick="() => BeginSave(item)" disabled="@busy">Save</button>
-                        </div>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-sm btn-outline-primary" @onclick="() => BeginSave(item)" disabled="@busy">Save</button>
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="() => EditCapturedAsync(item)" disabled="@busy">Edit</button>
                     </div>
                 </div>
-            }
-        </div>
+            </div>
+        }
+    </div>
     }
     else
     {
@@ -130,6 +131,7 @@ else
 
 @code {
     [Inject] private ClipboardApiClient Api { get; set; } = default!;
+    [Inject] private NavigationManager Nav { get; set; } = default!;
 
     private const int MaxItems = 100;
     private const int MaxImageItems = 20;
@@ -331,6 +333,40 @@ else
         {
             busy = false;
         }
+    }
+
+    private async Task EditCapturedAsync(TextEntry item)
+    {
+        busy = true;
+        saveStatus = null;
+        error = null;
+        try
+        {
+            var created = await Api.CreateStoredFromClipboardAsync(
+                new CreateStoredFromClipboardRequest(item.Id, BuildDefaultName(item.Content), null));
+
+            NavigateToEditor(created.Id);
+        }
+        catch (Exception ex)
+        {
+            saveStatus = $"Edit failed: {ex.Message}";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private void NavigateToEditor(int id)
+    {
+        var returnUrl = Nav.ToBaseRelativePath(Nav.Uri);
+        if (string.IsNullOrWhiteSpace(returnUrl))
+        {
+            returnUrl = "captured";
+        }
+
+        var encoded = Uri.EscapeDataString(returnUrl);
+        Nav.NavigateTo($"/clip/{id}?returnUrl={encoded}");
     }
 
     private static string BuildDefaultName(string content)

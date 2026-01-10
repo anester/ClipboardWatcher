@@ -1,0 +1,183 @@
+@page "/clip/{Id:int}"
+
+@using System.Globalization
+
+<PageTitle>Edit Clip</PageTitle>
+
+<h1>Edit Clip</h1>
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <div class="alert alert-danger">@error</div>
+}
+else if (clip is null)
+{
+    <p>Loading...</p>
+}
+else
+{
+    <div class="d-flex flex-column" style="min-height: calc(100vh - 220px);">
+        <div class="d-flex flex-wrap align-items-end gap-2 mb-3">
+            <div class="flex-grow-1" style="min-width: 200px;">
+                <label class="form-label">Name</label>
+                <input class="form-control" @bind="editName" />
+            </div>
+            <div style="min-width: 180px;">
+                <label class="form-label">Hierarchy</label>
+                <select class="form-select" @bind="editHierarchyId">
+                    <option value="">(Root)</option>
+                    @foreach (var h in hierarchies)
+                    {
+                        <option value="@h.Id">@h.Name</option>
+                    }
+                </select>
+            </div>
+            <div style="min-width: 160px;">
+                <label class="form-label">Language</label>
+                <select class="form-select" @bind="editLanguage">
+                    <option value="Text">Text</option>
+                    <option value="XML">XML</option>
+                    <option value="JSON">JSON</option>
+                    <option value="JavaScript">JavaScript</option>
+                    <option value="CSharp">CSharp</option>
+                    <option value="TypeScript">TypeScript</option>
+                    <option value="Java">Java</option>
+                    <option value="Python">Python</option>
+                </select>
+            </div>
+            <div class="ms-auto d-flex gap-2">
+                <button class="btn btn-success" @onclick="SaveAsync" disabled="@busy">Save</button>
+                <button class="btn btn-outline-secondary" @onclick="Cancel" disabled="@busy">Cancel</button>
+            </div>
+        </div>
+
+        <div class="mb-3"
+             style="border: 1px solid #ced4da; border-radius: 6px; overflow: hidden; height: calc(100vh - 260px); min-height: 360px;">
+            <MonacoEditor Value="@editContent"
+                          ValueChanged="OnEditContentChanged"
+                          Language="@editLanguage"
+                          HeightCss="100%" />
+        </div>
+    </div>
+}
+
+@code {
+    [Inject] private ClipboardApiClient Api { get; set; } = default!;
+    [Inject] private NavigationManager Nav { get; set; } = default!;
+
+    [Parameter] public int Id { get; set; }
+
+    private StoredTextEntry? clip;
+    private List<HierarchyEntry> hierarchies = [];
+    private string? error;
+    private bool busy;
+    private string returnUrl = "stored";
+
+    private string editName = "";
+    private int? editHierarchyId;
+    private string editContent = "";
+    private string editLanguage = "Text";
+
+    protected override async Task OnInitializedAsync()
+    {
+        ResolveReturnUrl();
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        busy = true;
+        error = null;
+        try
+        {
+            hierarchies = await Api.GetHierarchyAsync();
+            clip = await Api.GetStoredTextEntryAsync(Id);
+
+            if (clip is null)
+            {
+                error = "Clip not found.";
+                return;
+            }
+
+            editName = clip.Name;
+            editHierarchyId = clip.HierarchyId;
+            editContent = clip.Content;
+            editLanguage = string.IsNullOrWhiteSpace(clip.Language) ? "Text" : clip.Language;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private void OnEditContentChanged(string value)
+    {
+        editContent = value;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (clip is null)
+        {
+            return;
+        }
+
+        busy = true;
+        error = null;
+        try
+        {
+            await Api.UpdateStoredTextAsync(
+                clip.Id,
+                new UpdateStoredTextRequest(editHierarchyId, editName.Trim(), editContent, editLanguage));
+
+            NavigateBack();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private void Cancel() => NavigateBack();
+
+    private void NavigateBack()
+    {
+        var destination = string.IsNullOrWhiteSpace(returnUrl) ? "stored" : returnUrl;
+        Nav.NavigateTo(destination);
+    }
+
+    private void ResolveReturnUrl()
+    {
+        var uri = Nav.ToAbsoluteUri(Nav.Uri);
+        if (string.IsNullOrWhiteSpace(uri.Query))
+        {
+            return;
+        }
+
+        var query = uri.Query.TrimStart('?')
+            .Split('&', StringSplitOptions.RemoveEmptyEntries);
+        foreach (var part in query)
+        {
+            var pieces = part.Split('=', 2);
+            if (pieces.Length != 2)
+            {
+                continue;
+            }
+
+            if (!string.Equals(pieces[0], "returnUrl", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            returnUrl = Uri.UnescapeDataString(pieces[1]);
+        }
+    }
+}

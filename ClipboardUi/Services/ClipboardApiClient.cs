@@ -60,6 +60,11 @@ public sealed class ClipboardApiClient
         return items ?? [];
     }
 
+    public async Task<StoredTextEntry?> GetStoredTextEntryAsync(int id)
+    {
+        return await _http.GetFromJsonAsync<StoredTextEntry>($"/api/stored-text/{id}");
+    }
+
     public async Task<StoredTextEntry> CreateStoredFromClipboardAsync(CreateStoredFromClipboardRequest request)
     {
         var response = await _http.PostAsJsonAsync("/api/stored-text/from-clipboard", request);
