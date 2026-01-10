@@ -1,6 +1,7 @@
 @page "/captured"
 @implements IAsyncDisposable
 @using System.IO
+@using System.Linq
 @using System.Net.WebSockets
 @using System.Text
 @using System.Text.Json
@@ -23,6 +24,23 @@ else
         <button class="btn btn-sm btn-primary" @onclick="ReloadAsync" disabled="@busy">Refresh</button>
         <span class="text-muted">@captured.Count items</span>
     </div>
+
+    <ul class="nav nav-tabs mb-3">
+        <li class="nav-item">
+            <button class="nav-link @(activeTab == CapturedTab.Text ? "active" : "")"
+                    type="button"
+                    @onclick="@(() => activeTab = CapturedTab.Text)">
+                Text
+            </button>
+        </li>
+        <li class="nav-item">
+            <button class="nav-link @(activeTab == CapturedTab.Images ? "active" : "")"
+                    type="button"
+                    @onclick="@(() => activeTab = CapturedTab.Images)">
+                Images
+            </button>
+        </li>
+    </ul>
 
     @if (selectedToSave is not null)
     {
@@ -61,29 +79,59 @@ else
         </div>
     }
 
-    <div class="list-group">
-        @foreach (var item in captured)
-        {
-            <div class="list-group-item">
-                <div class="d-flex justify-content-between align-items-start gap-2">
-                    <div class="flex-grow-1">
-                        <div class="fw-bold">@item.CreatedAt.ToLocalTime().ToString("g")</div>
-                        <div class="text-break" style="white-space: pre-wrap;">@Truncate(item.Content, 400)</div>
-                    </div>
-                    <div>
-                        <button class="btn btn-sm btn-outline-primary" @onclick="() => BeginSave(item)" disabled="@busy">Save</button>
+    @if (activeTab == CapturedTab.Text)
+    {
+        <div class="list-group">
+            @foreach (var item in captured)
+            {
+                <div class="list-group-item">
+                    <div class="d-flex justify-content-between align-items-start gap-2">
+                        <div class="flex-grow-1">
+                            <div class="fw-bold">@item.CreatedAt.ToLocalTime().ToString("g")</div>
+                            <div class="text-break" style="white-space: pre-wrap;">@Truncate(item.Content, 400)</div>
+                        </div>
+                        <div>
+                            <button class="btn btn-sm btn-outline-primary" @onclick="() => BeginSave(item)" disabled="@busy">Save</button>
+                        </div>
                     </div>
                 </div>
+            }
+        </div>
+    }
+    else
+    {
+        @if (capturedImages is null)
+        {
+            <p>Loading images...</p>
+        }
+        else if (capturedImages.Count == 0)
+        {
+            <p class="text-muted">No images captured yet.</p>
+        }
+        else
+        {
+            <div class="d-flex flex-wrap gap-2">
+                @foreach (var image in capturedImages)
+                {
+                    <div class="card" style="width: 220px;">
+                        <img class="card-img-top" src="@BuildImageSrc(image)" alt="Clipboard image" />
+                        <div class="card-body p-2">
+                            <div class="text-muted small">@image.CreatedAt.ToLocalTime().ToString("g")</div>
+                        </div>
+                    </div>
+                }
             </div>
         }
-    </div>
+    }
 }
 
 @code {
     [Inject] private ClipboardApiClient Api { get; set; } = default!;
 
     private const int MaxItems = 100;
+    private const int MaxImageItems = 20;
     private List<TextEntry>? captured;
+    private List<ImageEntry>? capturedImages;
     private List<HierarchyEntry> hierarchies = [];
     private string? error;
     private bool busy;
@@ -92,6 +140,7 @@ else
     private string saveName = "";
     private int? saveHierarchyId;
     private string? saveStatus;
+    private CapturedTab activeTab = CapturedTab.Text;
 
     private ClientWebSocket? _socket;
     private CancellationTokenSource? _wsCts;
@@ -113,6 +162,7 @@ else
         {
             hierarchies = await Api.GetHierarchyAsync();
             captured = await Api.GetRecentTextAsync(MaxItems);
+            capturedImages = await Api.GetRecentImagesAsync(MaxImageItems);
         }
         catch (Exception ex)
         {
@@ -198,24 +248,45 @@ else
             return;
         }
 
-        if (message is null || message.Type != "text" || string.IsNullOrWhiteSpace(message.Content))
+        if (message is null)
         {
             return;
         }
 
-        captured ??= [];
-        if (captured.Any(item => item.Id == message.Id))
+        if (message.Type == "text" && !string.IsNullOrWhiteSpace(message.Content))
         {
+            captured ??= [];
+            if (captured.Any(item => item.Id == message.Id))
+            {
+                return;
+            }
+
+            captured.Insert(0, new TextEntry(message.Id, message.Content, message.CreatedAt));
+            if (captured.Count > MaxItems)
+            {
+                captured.RemoveRange(MaxItems, captured.Count - MaxItems);
+            }
+
+            await InvokeAsync(StateHasChanged);
             return;
         }
 
-        captured.Insert(0, new TextEntry(message.Id, message.Content, message.CreatedAt));
-        if (captured.Count > MaxItems)
+        if (message.Type == "image" && !string.IsNullOrWhiteSpace(message.Base64Data))
         {
-            captured.RemoveRange(MaxItems, captured.Count - MaxItems);
-        }
+            capturedImages ??= [];
+            if (capturedImages.Any(item => item.Id == message.Id))
+            {
+                return;
+            }
 
-        await InvokeAsync(StateHasChanged);
+            capturedImages.Insert(0, new ImageEntry(message.Id, message.CreatedAt, message.Base64Data));
+            if (capturedImages.Count > MaxImageItems)
+            {
+                capturedImages.RemoveRange(MaxImageItems, capturedImages.Count - MaxImageItems);
+            }
+
+            await InvokeAsync(StateHasChanged);
+        }
     }
 
     private void BeginSave(TextEntry item)
@@ -278,6 +349,8 @@ else
         return content[..max] + ".";
     }
 
+    private static string BuildImageSrc(ImageEntry image) => $"data:image/png;base64,{image.Base64Data}";
+
     public async ValueTask DisposeAsync()
     {
         if (_wsCts is not null)
@@ -306,4 +379,9 @@ else
     }
 
     private sealed record WebSocketClipboardEvent(string Type, int Id, string? Content, string? Base64Data, DateTimeOffset CreatedAt);
+    private enum CapturedTab
+    {
+        Text,
+        Images
+    }
 }

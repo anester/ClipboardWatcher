@@ -20,6 +20,12 @@ public sealed class ClipboardApiClient
         return items ?? [];
     }
 
+    public async Task<List<ImageEntry>> GetRecentImagesAsync(int limit)
+    {
+        var items = await _http.GetFromJsonAsync<List<ImageEntry>>($"/api/images?limit={limit}");
+        return items ?? [];
+    }
+
     public async Task<List<HierarchyEntry>> GetHierarchyAsync(int limit = 1000)
     {
         var items = await _http.GetFromJsonAsync<List<HierarchyEntry>>($"/api/hierarchy?limit={limit}");
@@ -75,6 +81,8 @@ public sealed class ClipboardApiClient
 }
 
 public sealed record TextEntry(int Id, string Content, DateTimeOffset CreatedAt);
+
+public sealed record ImageEntry(int Id, DateTimeOffset CreatedAt, string Base64Data);
 
 public sealed record HierarchyEntry(int Id, int? ParentId, string Name, DateTimeOffset CreatedAt);
 
