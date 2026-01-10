@@ -80,7 +80,7 @@ public sealed class ClipboardApiClient
     }
 }
 
-public sealed record TextEntry(int Id, string Content, DateTimeOffset CreatedAt);
+public sealed record TextEntry(int Id, string Content, DateTimeOffset CreatedAt, string Language);
 
 public sealed record ImageEntry(int Id, DateTimeOffset CreatedAt, string Base64Data);
 

@@ -87,7 +87,10 @@ else
                 <div class="list-group-item">
                     <div class="d-flex justify-content-between align-items-start gap-2">
                         <div class="flex-grow-1">
-                            <div class="fw-bold">@item.CreatedAt.ToLocalTime().ToString("g")</div>
+                        <div class="fw-bold d-flex align-items-center gap-2">
+                            <span>@item.CreatedAt.ToLocalTime().ToString("g")</span>
+                            <span class="badge text-bg-secondary">@FormatLanguage(item.Language)</span>
+                        </div>
                             <div class="text-break" style="white-space: pre-wrap;">@Truncate(item.Content, 400)</div>
                         </div>
                         <div>
@@ -261,7 +264,7 @@ else
                 return;
             }
 
-            captured.Insert(0, new TextEntry(message.Id, message.Content, message.CreatedAt));
+            captured.Insert(0, new TextEntry(message.Id, message.Content, message.CreatedAt, FormatLanguage(message.Language)));
             if (captured.Count > MaxItems)
             {
                 captured.RemoveRange(MaxItems, captured.Count - MaxItems);
@@ -350,6 +353,8 @@ else
     }
 
     private static string BuildImageSrc(ImageEntry image) => $"data:image/png;base64,{image.Base64Data}";
+    private static string FormatLanguage(string? language) =>
+        string.IsNullOrWhiteSpace(language) ? "Text" : language;
 
     public async ValueTask DisposeAsync()
     {
@@ -378,7 +383,7 @@ else
         _wsCts?.Dispose();
     }
 
-    private sealed record WebSocketClipboardEvent(string Type, int Id, string? Content, string? Base64Data, DateTimeOffset CreatedAt);
+    private sealed record WebSocketClipboardEvent(string Type, int Id, string? Content, string? Base64Data, DateTimeOffset CreatedAt, string? Language);
     private enum CapturedTab
     {
         Text,

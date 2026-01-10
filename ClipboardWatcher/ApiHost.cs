@@ -210,7 +210,8 @@ public sealed class ApiHost
             type = "text",
             id = entry.Id,
             content = entry.Content,
-            createdAt = entry.CreatedAt
+            createdAt = entry.CreatedAt,
+            language = entry.Language
         });
 
         return _webSocketHub.BroadcastAsync(payload, cancellationToken);

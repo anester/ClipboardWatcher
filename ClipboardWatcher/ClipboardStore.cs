@@ -7,7 +7,7 @@ using Microsoft.Data.Sqlite;
 
 namespace ClipboardWatcher;
 
-public record ClipboardTextEntry(int Id, string Content, DateTimeOffset CreatedAt);
+public record ClipboardTextEntry(int Id, string Content, DateTimeOffset CreatedAt, string Language);
 public record ClipboardImageEntry(int Id, byte[] Data, DateTimeOffset CreatedAt);
 public record HierarchyEntry(int Id, int? ParentId, string Name, DateTimeOffset CreatedAt);
 public record StoredTextEntry(int Id, int? HierarchyId, string Name, string Content, DateTimeOffset CreatedAt);
@@ -54,7 +54,8 @@ public class ClipboardStore
             CREATE TABLE IF NOT EXISTS TextEntries(
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
                 Content TEXT NOT NULL,
-                CreatedAt TEXT NOT NULL
+                CreatedAt TEXT NOT NULL,
+                Language TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS ImageEntries(
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -84,9 +85,29 @@ public class ClipboardStore
             CREATE INDEX IF NOT EXISTS IX_StoredTextEntries_CreatedAt ON StoredTextEntries(CreatedAt DESC);
             """;
         command.ExecuteNonQuery();
+
+        EnsureTextEntriesLanguageColumn(connection);
     }
 
-    public async Task<ClipboardTextEntry?> SaveTextAsync(string content)
+    private static void EnsureTextEntriesLanguageColumn(SqliteConnection connection)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "PRAGMA table_info(TextEntries);";
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            if (string.Equals(reader.GetString(1), "Language", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+
+        using var alter = connection.CreateCommand();
+        alter.CommandText = "ALTER TABLE TextEntries ADD COLUMN Language TEXT NOT NULL DEFAULT 'Text';";
+        alter.ExecuteNonQuery();
+    }
+
+    public async Task<ClipboardTextEntry?> SaveTextAsync(string content, string language)
     {
         if (string.IsNullOrWhiteSpace(content))
         {
@@ -98,18 +119,22 @@ public class ClipboardStore
         await using SqliteTransaction transaction = (SqliteTransaction)await connection.BeginTransactionAsync();
 
         var createdAt = DateTimeOffset.UtcNow;
+        var normalizedLanguage = string.IsNullOrWhiteSpace(language)
+            ? ClipboardLanguageDetector.Text
+            : language;
         int id;
         await using (var cmd = connection.CreateCommand())
         {
             cmd.Transaction = transaction;
             cmd.CommandText =
                 """
-                INSERT INTO TextEntries(Content, CreatedAt)
-                VALUES ($content, $createdAt);
+                INSERT INTO TextEntries(Content, CreatedAt, Language)
+                VALUES ($content, $createdAt, $language);
                 SELECT last_insert_rowid();
                 """;
             cmd.Parameters.AddWithValue("$content", content);
             cmd.Parameters.AddWithValue("$createdAt", createdAt.ToString("O", CultureInfo.InvariantCulture));
+            cmd.Parameters.AddWithValue("$language", normalizedLanguage);
             id = Convert.ToInt32(await cmd.ExecuteScalarAsync());
         }
 
@@ -122,7 +147,7 @@ public class ClipboardStore
 
         await transaction.CommitAsync();
 
-        return new ClipboardTextEntry(id, content, createdAt);
+        return new ClipboardTextEntry(id, content, createdAt, normalizedLanguage);
     }
 
     public async Task<ClipboardImageEntry?> SaveImageAsync(byte[] data)
@@ -168,7 +193,7 @@ public class ClipboardStore
     {
         await using var connection = await OpenConnectionAsync();
         await using var cmd = connection.CreateCommand();
-        cmd.CommandText = "SELECT Id, Content, CreatedAt FROM TextEntries ORDER BY Id DESC LIMIT 1;";
+        cmd.CommandText = "SELECT Id, Content, CreatedAt, Language FROM TextEntries ORDER BY Id DESC LIMIT 1;";
 
         await using var reader = await cmd.ExecuteReaderAsync();
         if (await reader.ReadAsync())
@@ -176,7 +201,8 @@ public class ClipboardStore
             return new ClipboardTextEntry(
                 reader.GetInt32(0),
                 reader.GetString(1),
-                DateTimeOffset.Parse(reader.GetString(2), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind));
+                DateTimeOffset.Parse(reader.GetString(2), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
+                reader.IsDBNull(3) ? ClipboardLanguageDetector.Text : reader.GetString(3));
         }
 
         return null;
@@ -188,7 +214,7 @@ public class ClipboardStore
 
         await using var connection = await OpenConnectionAsync();
         await using var cmd = connection.CreateCommand();
-        cmd.CommandText = "SELECT Id, Content, CreatedAt FROM TextEntries ORDER BY Id DESC LIMIT $limit;";
+        cmd.CommandText = "SELECT Id, Content, CreatedAt, Language FROM TextEntries ORDER BY Id DESC LIMIT $limit;";
         cmd.Parameters.AddWithValue("$limit", limit);
 
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -197,7 +223,8 @@ public class ClipboardStore
             results.Add(new ClipboardTextEntry(
                 reader.GetInt32(0),
                 reader.GetString(1),
-                DateTimeOffset.Parse(reader.GetString(2), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind)));
+                DateTimeOffset.Parse(reader.GetString(2), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
+                reader.IsDBNull(3) ? ClipboardLanguageDetector.Text : reader.GetString(3)));
         }
 
         return results;
@@ -246,7 +273,7 @@ public class ClipboardStore
     {
         await using var connection = await OpenConnectionAsync();
         await using var cmd = connection.CreateCommand();
-        cmd.CommandText = "SELECT Id, Content, CreatedAt FROM TextEntries WHERE Id = $id LIMIT 1;";
+        cmd.CommandText = "SELECT Id, Content, CreatedAt, Language FROM TextEntries WHERE Id = $id LIMIT 1;";
         cmd.Parameters.AddWithValue("$id", id);
 
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -255,7 +282,8 @@ public class ClipboardStore
             return new ClipboardTextEntry(
                 reader.GetInt32(0),
                 reader.GetString(1),
-                DateTimeOffset.Parse(reader.GetString(2), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind));
+                DateTimeOffset.Parse(reader.GetString(2), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
+                reader.IsDBNull(3) ? ClipboardLanguageDetector.Text : reader.GetString(3));
         }
 
         return null;

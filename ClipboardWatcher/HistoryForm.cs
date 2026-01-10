@@ -32,6 +32,7 @@ public sealed class HistoryForm : Form
         };
         _listView.Columns.Add("Type", 80);
         _listView.Columns.Add("Preview", 480);
+        _listView.Columns.Add("Language", 100);
         _listView.Columns.Add("Created", 120);
 
         _refreshButton = new Button
@@ -81,8 +82,8 @@ public sealed class HistoryForm : Form
             var imageEntries = await _store.GetRecentImagesAsync(100);
 
             var items = new List<HistoryItem>(textEntries.Count + imageEntries.Count);
-            items.AddRange(textEntries.Select(t => new HistoryItem("Text", BuildTextPreview(t.Content), t.CreatedAt)));
-            items.AddRange(imageEntries.Select(i => new HistoryItem("Image", BuildImagePreview(i.Data), i.CreatedAt)));
+            items.AddRange(textEntries.Select(t => new HistoryItem("Text", BuildTextPreview(t.Content), t.Language, t.CreatedAt)));
+            items.AddRange(imageEntries.Select(i => new HistoryItem("Image", BuildImagePreview(i.Data), null, i.CreatedAt)));
 
             var ordered = items
                 .OrderByDescending(i => i.CreatedAt)
@@ -94,7 +95,7 @@ public sealed class HistoryForm : Form
             foreach (var item in ordered)
             {
                 var created = item.CreatedAt.ToLocalTime().ToString("g");
-                var lvi = new ListViewItem(new[] { item.Type, item.Preview, created });
+                var lvi = new ListViewItem(new[] { item.Type, item.Preview, item.Language ?? "Text", created });
                 _listView.Items.Add(lvi);
             }
         }
@@ -136,5 +137,5 @@ public sealed class HistoryForm : Form
         }
     }
 
-    private sealed record HistoryItem(string Type, string Preview, DateTimeOffset CreatedAt);
+    private sealed record HistoryItem(string Type, string Preview, string? Language, DateTimeOffset CreatedAt);
 }

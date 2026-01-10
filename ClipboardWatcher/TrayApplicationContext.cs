@@ -50,7 +50,8 @@ public sealed class TrayApplicationContext : ApplicationContext
         {
             _ = Task.Run(async () =>
             {
-                var entry = await _store.SaveTextAsync(snapshot.Text!);
+                var language = ClipboardLanguageDetector.Detect(snapshot.Text);
+                var entry = await _store.SaveTextAsync(snapshot.Text!, language);
                 if (entry is not null)
                 {
                     await _apiHost.NotifyTextEntryAsync(entry);
