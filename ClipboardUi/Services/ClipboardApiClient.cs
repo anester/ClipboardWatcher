@@ -86,11 +86,11 @@ public sealed record ImageEntry(int Id, DateTimeOffset CreatedAt, string Base64D
 
 public sealed record HierarchyEntry(int Id, int? ParentId, string Name, DateTimeOffset CreatedAt);
 
-public sealed record StoredTextEntry(int Id, int? HierarchyId, string Name, string Content, DateTimeOffset CreatedAt);
+public sealed record StoredTextEntry(int Id, int? HierarchyId, string Name, string Content, DateTimeOffset CreatedAt, string Language);
 
 public sealed record CreateStoredFromClipboardRequest(int TextEntryId, string Name, int? HierarchyId);
 
-public sealed record UpdateStoredTextRequest(int? HierarchyId, string Name, string Content);
+public sealed record UpdateStoredTextRequest(int? HierarchyId, string Name, string Content, string Language);
 
 public sealed record CreateHierarchyRequest(int? ParentId, string Name);
 

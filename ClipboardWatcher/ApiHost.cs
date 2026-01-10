@@ -181,7 +181,7 @@ public sealed class ApiHost
         {
             try
             {
-                var ok = await _store.UpdateStoredTextEntryAsync(id, req.HierarchyId, req.Name, req.Content);
+                var ok = await _store.UpdateStoredTextEntryAsync(id, req.HierarchyId, req.Name, req.Content, req.Language);
                 return ok ? Results.NoContent() : Results.NotFound();
             }
             catch (ArgumentException ex)
@@ -239,7 +239,7 @@ public sealed class ApiHost
     private sealed record UpdateHierarchyRequest(int? ParentId, string Name);
 
     private sealed record CreateStoredFromClipboardRequest(int TextEntryId, string Name, int? HierarchyId);
-    private sealed record UpdateStoredTextRequest(int? HierarchyId, string Name, string Content);
+    private sealed record UpdateStoredTextRequest(int? HierarchyId, string Name, string Content, string Language);
 
     private sealed class WebSocketHub
     {

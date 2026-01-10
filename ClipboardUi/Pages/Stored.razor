@@ -169,7 +169,9 @@
         editName = entry.Name;
         editHierarchyId = entry.HierarchyId;
         editContent = entry.Content;
-        editLanguage = DetectLanguageForEditor(entry.Content);
+        editLanguage = string.IsNullOrWhiteSpace(entry.Language)
+            ? DetectLanguageForEditor(entry.Content)
+            : entry.Language;
         editStatus = null;
     }
 
@@ -195,7 +197,7 @@
         editStatus = null;
         try
         {
-            await Api.UpdateStoredTextAsync(editing.Id, new UpdateStoredTextRequest(editHierarchyId, editName.Trim(), editContent));
+            await Api.UpdateStoredTextAsync(editing.Id, new UpdateStoredTextRequest(editHierarchyId, editName.Trim(), editContent, editLanguage));
             editing = null;
             await ReloadAsync();
         }

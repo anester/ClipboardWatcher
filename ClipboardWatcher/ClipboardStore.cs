@@ -10,7 +10,7 @@ namespace ClipboardWatcher;
 public record ClipboardTextEntry(int Id, string Content, DateTimeOffset CreatedAt, string Language);
 public record ClipboardImageEntry(int Id, byte[] Data, DateTimeOffset CreatedAt);
 public record HierarchyEntry(int Id, int? ParentId, string Name, DateTimeOffset CreatedAt);
-public record StoredTextEntry(int Id, int? HierarchyId, string Name, string Content, DateTimeOffset CreatedAt);
+public record StoredTextEntry(int Id, int? HierarchyId, string Name, string Content, DateTimeOffset CreatedAt, string Language);
 
 public class ClipboardStore
 {
@@ -75,6 +75,7 @@ public class ClipboardStore
                 Name TEXT NOT NULL,
                 Content TEXT NOT NULL,
                 CreatedAt TEXT NOT NULL,
+                Language TEXT NOT NULL,
                 FOREIGN KEY (HierarchyId) REFERENCES Hierarchy(Id) ON DELETE SET NULL
             );
             CREATE INDEX IF NOT EXISTS IX_TextEntries_CreatedAt ON TextEntries(CreatedAt DESC);
@@ -87,6 +88,7 @@ public class ClipboardStore
         command.ExecuteNonQuery();
 
         EnsureTextEntriesLanguageColumn(connection);
+        EnsureStoredTextEntriesLanguageColumn(connection);
     }
 
     private static void EnsureTextEntriesLanguageColumn(SqliteConnection connection)
@@ -104,6 +106,24 @@ public class ClipboardStore
 
         using var alter = connection.CreateCommand();
         alter.CommandText = "ALTER TABLE TextEntries ADD COLUMN Language TEXT NOT NULL DEFAULT 'Text';";
+        alter.ExecuteNonQuery();
+    }
+
+    private static void EnsureStoredTextEntriesLanguageColumn(SqliteConnection connection)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "PRAGMA table_info(StoredTextEntries);";
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            if (string.Equals(reader.GetString(1), "Language", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+
+        using var alter = connection.CreateCommand();
+        alter.CommandText = "ALTER TABLE StoredTextEntries ADD COLUMN Language TEXT NOT NULL DEFAULT 'Text';";
         alter.ExecuteNonQuery();
     }
 
@@ -479,26 +499,28 @@ public class ClipboardStore
         await using var connection = await OpenConnectionAsync();
         await using var cmd = connection.CreateCommand();
         var createdAt = DateTimeOffset.UtcNow;
+        var language = string.IsNullOrWhiteSpace(clipboard.Language) ? ClipboardLanguageDetector.Text : clipboard.Language;
         cmd.CommandText =
             """
-            INSERT INTO StoredTextEntries(HierarchyId, Name, Content, CreatedAt)
-            VALUES ($hierarchyId, $name, $content, $createdAt);
+            INSERT INTO StoredTextEntries(HierarchyId, Name, Content, CreatedAt, Language)
+            VALUES ($hierarchyId, $name, $content, $createdAt, $language);
             SELECT last_insert_rowid();
             """;
         cmd.Parameters.AddWithValue("$hierarchyId", (object?)hierarchyId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$name", name);
         cmd.Parameters.AddWithValue("$content", clipboard.Content);
         cmd.Parameters.AddWithValue("$createdAt", createdAt.ToString("O", CultureInfo.InvariantCulture));
+        cmd.Parameters.AddWithValue("$language", language);
 
         var id = Convert.ToInt32(await cmd.ExecuteScalarAsync());
-        return new StoredTextEntry(id, hierarchyId, name, clipboard.Content, createdAt);
+        return new StoredTextEntry(id, hierarchyId, name, clipboard.Content, createdAt, language);
     }
 
     public async Task<StoredTextEntry?> GetStoredTextEntryAsync(int id)
     {
         await using var connection = await OpenConnectionAsync();
         await using var cmd = connection.CreateCommand();
-        cmd.CommandText = "SELECT Id, HierarchyId, Name, Content, CreatedAt FROM StoredTextEntries WHERE Id = $id LIMIT 1;";
+        cmd.CommandText = "SELECT Id, HierarchyId, Name, Content, CreatedAt, Language FROM StoredTextEntries WHERE Id = $id LIMIT 1;";
         cmd.Parameters.AddWithValue("$id", id);
 
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -509,7 +531,8 @@ public class ClipboardStore
                 reader.IsDBNull(1) ? null : reader.GetInt32(1),
                 reader.GetString(2),
                 reader.GetString(3),
-                DateTimeOffset.Parse(reader.GetString(4), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind));
+                DateTimeOffset.Parse(reader.GetString(4), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
+                reader.IsDBNull(5) ? ClipboardLanguageDetector.Text : reader.GetString(5));
         }
 
         return null;
@@ -522,7 +545,7 @@ public class ClipboardStore
         await using var cmd = connection.CreateCommand();
         cmd.CommandText =
             """
-            SELECT Id, HierarchyId, Name, Content, CreatedAt
+            SELECT Id, HierarchyId, Name, Content, CreatedAt, Language
             FROM StoredTextEntries
             WHERE ($hierarchyId IS NULL OR HierarchyId = $hierarchyId)
             ORDER BY Id DESC
@@ -539,13 +562,14 @@ public class ClipboardStore
                 reader.IsDBNull(1) ? null : reader.GetInt32(1),
                 reader.GetString(2),
                 reader.GetString(3),
-                DateTimeOffset.Parse(reader.GetString(4), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind)));
+                DateTimeOffset.Parse(reader.GetString(4), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
+                reader.IsDBNull(5) ? ClipboardLanguageDetector.Text : reader.GetString(5)));
         }
 
         return results;
     }
 
-    public async Task<bool> UpdateStoredTextEntryAsync(int id, int? hierarchyId, string name, string content)
+    public async Task<bool> UpdateStoredTextEntryAsync(int id, int? hierarchyId, string name, string content, string language)
     {
         if (string.IsNullOrWhiteSpace(name))
         {
@@ -562,6 +586,10 @@ public class ClipboardStore
             throw new InvalidOperationException($"HierarchyId {hierarchyId.Value} does not exist.");
         }
 
+        var normalizedLanguage = string.IsNullOrWhiteSpace(language)
+            ? ClipboardLanguageDetector.Text
+            : language;
+
         await using var connection = await OpenConnectionAsync();
         await using var cmd = connection.CreateCommand();
         cmd.CommandText =
@@ -569,13 +597,15 @@ public class ClipboardStore
             UPDATE StoredTextEntries
             SET HierarchyId = $hierarchyId,
                 Name = $name,
-                Content = $content
+                Content = $content,
+                Language = $language
             WHERE Id = $id;
             """;
         cmd.Parameters.AddWithValue("$id", id);
         cmd.Parameters.AddWithValue("$hierarchyId", (object?)hierarchyId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$name", name);
         cmd.Parameters.AddWithValue("$content", content);
+        cmd.Parameters.AddWithValue("$language", normalizedLanguage);
         var rows = await cmd.ExecuteNonQueryAsync();
         return rows > 0;
     }
