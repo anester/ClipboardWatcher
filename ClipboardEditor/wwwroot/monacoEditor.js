@@ -1,6 +1,27 @@
 const editorRegistry = new Map();
 let loaderPromise = null;
 
+function configureMonacoEnvironment(basePath) {
+  const baseUrl = new URL(`${basePath}/monaco/`, window.location.origin).toString();
+  const workerMainUrl = new URL("vs/base/worker/workerMain.js", baseUrl).toString();
+
+  if (window.MonacoEnvironment?.__configuredBasePath === basePath) {
+    return;
+  }
+
+  window.MonacoEnvironment = {
+    __configuredBasePath: basePath,
+    getWorkerUrl: function getWorkerUrl(moduleId, label) {
+      const workerBootstrap = `
+        self.MonacoEnvironment = { baseUrl: '${baseUrl}' };
+        importScripts('${workerMainUrl}');
+      `;
+
+      return `data:text/javascript;charset=utf-8,${encodeURIComponent(workerBootstrap)}`;
+    }
+  };
+}
+
 function loadScript(url) {
   return new Promise((resolve, reject) => {
     const existing = document.querySelector(`script[src="${url}"]`);
@@ -27,6 +48,7 @@ async function ensureMonaco(basePath) {
 
   if (!loaderPromise) {
     loaderPromise = (async () => {
+      configureMonacoEnvironment(basePath);
       await loadScript(`${basePath}/monaco/vs/loader.js`);
       return new Promise((resolve, reject) => {
         window.require.config({ paths: { vs: `${basePath}/monaco/vs` } });
