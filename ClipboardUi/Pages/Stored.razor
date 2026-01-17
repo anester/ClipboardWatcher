@@ -57,6 +57,9 @@
                                     <div class="text-break" style="white-space: pre-wrap;">@Truncate(item.Content, 400)</div>
                                 </div>
                                 <div class="d-flex gap-2">
+                                    <button class="btn btn-sm btn-outline-secondary" @onclick="() => CopyStoredAsync(item)" disabled="@busy">
+                                        @(copiedId == item.Id ? "Copied" : "Copy")
+                                    </button>
                                     <button class="btn btn-sm btn-outline-primary" @onclick="() => EditStored(item)" disabled="@busy">Edit</button>
                                     <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteStoredAsync(item)" disabled="@busy">Delete</button>
                                 </div>
@@ -80,6 +83,7 @@
     private List<StoredTextEntry> stored = [];
 
     private int? selectedHierarchyId;
+    private int? copiedId;
 
     protected override async Task OnInitializedAsync()
     {
@@ -116,6 +120,25 @@
 
         var encoded = Uri.EscapeDataString(returnUrl);
         Nav.NavigateTo($"/clip/{entry.Id}?returnUrl={encoded}");
+    }
+
+    private async Task CopyStoredAsync(StoredTextEntry entry)
+    {
+        busy = true;
+        error = null;
+        try
+        {
+            await Api.SetClipboardStoredTextAsync(entry.Id);
+            copiedId = entry.Id;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
     }
 
     private async Task DeleteStoredAsync(StoredTextEntry entry)

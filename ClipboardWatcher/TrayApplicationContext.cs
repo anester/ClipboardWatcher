@@ -12,6 +12,11 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly ClipboardWatcherForm _watcherForm;
     private readonly ClipboardStore _store;
     private readonly ApiHost _apiHost;
+    private readonly object _clipboardGate = new();
+    private string? _ignoreClipboardText;
+    private DateTimeOffset _ignoreClipboardUntil;
+    private DateTimeOffset? _lastClipboardSetAt;
+    private string? _lastClipboardSetText;
     private HistoryForm? _historyForm;
     private readonly CancellationTokenSource _cts = new();
     private Task? _apiTask;
@@ -19,7 +24,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     public TrayApplicationContext(ClipboardStore store, int port)
     {
         _store = store;
-        _apiHost = new ApiHost(store, port);
+        _apiHost = new ApiHost(store, port, SetClipboardTextAsync);
 
         _notifyIcon = BuildNotifyIcon(port);
         _watcherForm = new ClipboardWatcherForm();
@@ -46,6 +51,27 @@ public sealed class TrayApplicationContext : ApplicationContext
 
     private void OnClipboardChanged(object? sender, ClipboardSnapshot snapshot)
     {
+        if (snapshot.Text is not null)
+        {
+            var now = DateTimeOffset.UtcNow;
+            lock (_clipboardGate)
+            {
+                if (_lastClipboardSetAt.HasValue)
+                {
+                    var deltaMs = (now - _lastClipboardSetAt.Value).TotalMilliseconds;
+                    Console.WriteLine($"[Clipboard] Change at {now:O}, {deltaMs:F0} ms since set. Match={string.Equals(snapshot.Text, _lastClipboardSetText, StringComparison.Ordinal)}");
+                }
+
+                if (_ignoreClipboardText is not null
+                    && now <= _ignoreClipboardUntil
+                    && string.Equals(snapshot.Text, _ignoreClipboardText, StringComparison.Ordinal))
+                {
+                    Console.WriteLine($"[Clipboard] Ignored change at {now:O}.");
+                    return;
+                }
+            }
+        }
+
         if (!string.IsNullOrWhiteSpace(snapshot.Text))
         {
             _ = Task.Run(async () =>
@@ -69,6 +95,46 @@ public sealed class TrayApplicationContext : ApplicationContext
                 }
             });
         }
+    }
+
+    private Task SetClipboardTextAsync(string text)
+    {
+        var tcs = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (_watcherForm.IsDisposed)
+        {
+            tcs.SetException(new InvalidOperationException("Clipboard watcher is not available."));
+            return tcs.Task;
+        }
+
+        try
+        {
+            _watcherForm.BeginInvoke(new Action(() =>
+            {
+                try
+                {
+                    lock (_clipboardGate)
+                    {
+                        _ignoreClipboardText = text;
+                        _ignoreClipboardUntil = DateTimeOffset.UtcNow.AddSeconds(2);
+                        _lastClipboardSetAt = DateTimeOffset.UtcNow;
+                        _lastClipboardSetText = text;
+                    }
+                    Console.WriteLine($"[Clipboard] Set text at {_lastClipboardSetAt:O}, ignore until {_ignoreClipboardUntil:O}.");
+                    Clipboard.SetText(text, TextDataFormat.UnicodeText);
+                    tcs.SetResult(null);
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetException(ex);
+                }
+            }));
+        }
+        catch (Exception ex)
+        {
+            tcs.SetException(ex);
+        }
+
+        return tcs.Task;
     }
 
     private void ShowHistory()

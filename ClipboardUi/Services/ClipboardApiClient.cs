@@ -83,6 +83,18 @@ public sealed class ClipboardApiClient
         var response = await _http.DeleteAsync($"/api/stored-text/{id}");
         response.EnsureSuccessStatusCode();
     }
+
+    public async Task SetClipboardTextAsync(string text)
+    {
+        var response = await _http.PostAsJsonAsync("/api/clipboard/set-text", new SetClipboardTextRequest(text));
+        response.EnsureSuccessStatusCode();
+    }
+
+    public async Task SetClipboardStoredTextAsync(int id)
+    {
+        var response = await _http.PostAsJsonAsync("/api/clipboard/set-stored-text", new SetStoredClipboardRequest(id));
+        response.EnsureSuccessStatusCode();
+    }
 }
 
 public sealed record TextEntry(int Id, string Content, DateTimeOffset CreatedAt, string Language);
@@ -100,3 +112,7 @@ public sealed record UpdateStoredTextRequest(int? HierarchyId, string Name, stri
 public sealed record CreateHierarchyRequest(int? ParentId, string Name);
 
 public sealed record UpdateHierarchyRequest(int? ParentId, string Name);
+
+public sealed record SetClipboardTextRequest(string Text);
+
+public sealed record SetStoredClipboardRequest(int Id);

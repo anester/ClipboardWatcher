@@ -22,11 +22,13 @@ public sealed class ApiHost
     private readonly ClipboardStore _store;
     private readonly int _port;
     private readonly WebSocketHub _webSocketHub = new();
+    private readonly Func<string, Task> _setClipboardText;
 
-    public ApiHost(ClipboardStore store, int port)
+    public ApiHost(ClipboardStore store, int port, Func<string, Task> setClipboardText)
     {
         _store = store;
         _port = port;
+        _setClipboardText = setClipboardText;
     }
 
     public Task RunAsync(CancellationToken cancellationToken)
@@ -200,6 +202,48 @@ public sealed class ApiHost
             return ok ? Results.NoContent() : Results.NotFound();
         });
 
+        app.MapPost("/api/clipboard/set-text", async Task<IResult> (SetClipboardTextRequest req) =>
+        {
+            if (req is null || req.Text is null)
+            {
+                return Results.BadRequest(new { error = "Text is required." });
+            }
+
+            try
+            {
+                await _setClipboardText(req.Text);
+                return Results.NoContent();
+            }
+            catch (Exception ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        });
+
+        app.MapPost("/api/clipboard/set-stored-text", async Task<IResult> (SetStoredClipboardRequest req) =>
+        {
+            if (req is null || req.Id <= 0)
+            {
+                return Results.BadRequest(new { error = "Stored text id is required." });
+            }
+
+            var entry = await _store.GetStoredTextEntryAsync(req.Id);
+            if (entry is null)
+            {
+                return Results.NotFound(new { error = "Stored text entry not found." });
+            }
+
+            try
+            {
+                await _setClipboardText(entry.Content);
+                return Results.NoContent();
+            }
+            catch (Exception ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        });
+
         return app.RunAsync(cancellationToken);
     }
 
@@ -240,6 +284,8 @@ public sealed class ApiHost
 
     private sealed record CreateStoredFromClipboardRequest(int TextEntryId, string Name, int? HierarchyId);
     private sealed record UpdateStoredTextRequest(int? HierarchyId, string Name, string Content, string Language);
+    private sealed record SetClipboardTextRequest(string? Text);
+    private sealed record SetStoredClipboardRequest(int Id);
 
     private sealed class WebSocketHub
     {
