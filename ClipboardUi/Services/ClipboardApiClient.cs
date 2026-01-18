@@ -95,6 +95,31 @@ public sealed class ClipboardApiClient
         var response = await _http.PostAsJsonAsync("/api/clipboard/set-stored-text", new SetStoredClipboardRequest(id));
         response.EnsureSuccessStatusCode();
     }
+
+    public async Task<List<NoteDayEntry>> GetNoteDaysAsync()
+    {
+        var items = await _http.GetFromJsonAsync<List<NoteDayEntry>>("/notes/alldays");
+        return items ?? [];
+    }
+
+    public async Task<NoteEntry?> GetNoteAsync(int id)
+    {
+        return await _http.GetFromJsonAsync<NoteEntry>($"/notes/note/{id}");
+    }
+
+    public async Task<NoteEntry> SaveNoteAsync(int id, SaveNoteRequest request)
+    {
+        var response = await _http.PostAsJsonAsync($"/notes/note/{id}", request);
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<NoteEntry>())!;
+    }
+
+    public async Task<CompileMarkdownResponse> CompileMarkdownAsync(CompileMarkdownRequest request)
+    {
+        var response = await _http.PostAsJsonAsync("/notes/compile", request);
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<CompileMarkdownResponse>())!;
+    }
 }
 
 public sealed record TextEntry(int Id, string Content, DateTimeOffset CreatedAt, string Language);
@@ -116,3 +141,13 @@ public sealed record UpdateHierarchyRequest(int? ParentId, string Name);
 public sealed record SetClipboardTextRequest(string Text);
 
 public sealed record SetStoredClipboardRequest(int Id);
+
+public sealed record NoteDayEntry(int Id, DateTimeOffset CreatedAt, long CreatedAtTicks);
+
+public sealed record NoteEntry(int Id, DateTimeOffset CreatedAt, long CreatedAtTicks, string MarkDownContents, string CompiledHtml);
+
+public sealed record SaveNoteRequest(DateTimeOffset CreatedAt, long CreatedAtTicks, string MarkDownContents);
+
+public sealed record CompileMarkdownRequest(string MarkDownContents);
+
+public sealed record CompileMarkdownResponse(string CompiledHtml);

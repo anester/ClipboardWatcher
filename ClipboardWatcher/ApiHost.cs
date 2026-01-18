@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Markdig;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Cors.Infrastructure;
 using Microsoft.AspNetCore.Hosting;
@@ -23,6 +24,9 @@ public sealed class ApiHost
     private readonly int _port;
     private readonly WebSocketHub _webSocketHub = new();
     private readonly Func<string, Task> _setClipboardText;
+    private static readonly MarkdownPipeline MarkdownPipeline = new MarkdownPipelineBuilder()
+        .UseAdvancedExtensions()
+        .Build();
 
     public ApiHost(ClipboardStore store, int port, Func<string, Task> setClipboardText)
     {
@@ -202,6 +206,42 @@ public sealed class ApiHost
             return ok ? Results.NoContent() : Results.NotFound();
         });
 
+        // Notes
+        app.MapGet("/notes/alldays", async Task<IResult> () =>
+        {
+            var days = await _store.ListNoteDaysAsync();
+            return Results.Json(days);
+        });
+
+        app.MapGet("/notes/note/{id:int}", async Task<IResult> (int id) =>
+        {
+            var note = await _store.GetNoteAsync(id);
+            return note is null ? Results.NotFound() : Results.Json(note);
+        });
+
+        app.MapPost("/notes/note/{id:int}", async Task<IResult> (int id, SaveNoteRequest req) =>
+        {
+            if (req is null || req.MarkDownContents is null)
+            {
+                return Results.BadRequest(new { error = "MarkDownContents is required." });
+            }
+
+            var compiledHtml = Markdown.ToHtml(req.MarkDownContents, MarkdownPipeline);
+            var note = await _store.SaveNoteAsync(id, req.CreatedAt, req.CreatedAtTicks, req.MarkDownContents, compiledHtml);
+            return Results.Json(note);
+        });
+
+        app.MapPost("/notes/compile", async Task<IResult> (CompileMarkdownRequest req) =>
+        {
+            if (req is null)
+            {
+                return Results.BadRequest(new { error = "Request is required." });
+            }
+
+            var html = Markdown.ToHtml(req.MarkDownContents ?? string.Empty, MarkdownPipeline);
+            return Results.Json(new CompileMarkdownResponse(html));
+        });
+
         app.MapPost("/api/clipboard/set-text", async Task<IResult> (SetClipboardTextRequest req) =>
         {
             if (req is null || req.Text is null)
@@ -286,6 +326,9 @@ public sealed class ApiHost
     private sealed record UpdateStoredTextRequest(int? HierarchyId, string Name, string Content, string Language);
     private sealed record SetClipboardTextRequest(string? Text);
     private sealed record SetStoredClipboardRequest(int Id);
+    private sealed record SaveNoteRequest(DateTimeOffset CreatedAt, long CreatedAtTicks, string? MarkDownContents);
+    private sealed record CompileMarkdownRequest(string? MarkDownContents);
+    private sealed record CompileMarkdownResponse(string CompiledHtml);
 
     private sealed class WebSocketHub
     {

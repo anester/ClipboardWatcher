@@ -1,0 +1,275 @@
+@page "/notes"
+@implements IAsyncDisposable
+
+@using System.Globalization
+
+<PageTitle>Notes</PageTitle>
+
+<h1>Notes</h1>
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <div class="alert alert-danger">@error</div>
+}
+
+<div class="d-flex flex-column" style="min-height: calc(100vh - 220px);">
+    <div class="d-flex flex-wrap align-items-end gap-2 mb-3">
+        <div style="min-width: 220px;">
+            <label class="form-label">Day</label>
+            <input class="form-control"
+                   type="date"
+                   value="@SelectedDateString"
+                   @oninput="OnDateChanged"
+                   disabled="@busy" />
+        </div>
+        <div class="ms-auto d-flex gap-2 align-items-center">
+            <span class="text-muted">@statusMessage</span>
+        </div>
+    </div>
+
+    <div class="mb-3" style="height: calc(100vh - 280px); min-height: 360px;">
+        <div class="h-100"
+             style="border: 1px solid #ced4da; border-radius: 6px; overflow: hidden;">
+            <div class="h-100"
+                 style="padding: 12px; overflow: auto; background: #ffffff; display:@(isEditing ? "none" : "block")"
+                 @ref="previewPane"
+                 @onclick="OnPreviewClicked">
+                @((MarkupString)compiledHtml)
+            </div>
+            <div class="h-100" style="display:@(isEditing ? "block" : "none")">
+                <MonacoEditor @ref="editor"
+                              Value="@markdown"
+                              ValueChanged="OnMarkdownChanged"
+                              Language="Markdown"
+                              HeightCss="100%" />
+            </div>
+        </div>
+    </div>
+
+    <div class="mt-auto d-flex justify-content-end">
+        <button class="btn btn-success" @onclick="() => SaveAsync(returnToPreview: true)" disabled="@busy">Save</button>
+    </div>
+</div>
+
+@code {
+    [Inject] private ClipboardApiClient Api { get; set; } = default!;
+    [Inject] private IJSRuntime JS { get; set; } = default!;
+
+    private bool busy;
+    private string? error;
+    private string markdown = "";
+    private string compiledHtml = "";
+    private int noteId;
+    private List<NoteDayEntry> days = [];
+    private bool dirty;
+    private string statusMessage = "";
+    private bool isEditing;
+
+    private DateTime selectedDate = DateTime.Today;
+    private PeriodicTimer? autoSaveTimer;
+    private CancellationTokenSource? autoSaveCts;
+    private DotNetObjectReference<Notes>? selfRef;
+    private IJSObjectReference? notesModule;
+    private IJSObjectReference? saveShortcutHandle;
+    private ElementReference previewPane;
+    private MonacoEditor? editor;
+    private double? pendingScrollFraction;
+    private bool focusEditorOnRender;
+
+    private string SelectedDateString => selectedDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDaysAsync();
+        await LoadNoteForDateAsync(selectedDate);
+        StartAutoSave();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            notesModule = await JS.InvokeAsync<IJSObjectReference>("import", "./notes.js");
+            selfRef = DotNetObjectReference.Create(this);
+            saveShortcutHandle = await notesModule.InvokeAsync<IJSObjectReference>("registerSaveShortcut", selfRef);
+        }
+
+        if (focusEditorOnRender && editor is not null)
+        {
+            focusEditorOnRender = false;
+            if (pendingScrollFraction.HasValue)
+            {
+                await editor.ScrollToFractionAsync(pendingScrollFraction.Value);
+                pendingScrollFraction = null;
+            }
+
+            await editor.FocusAsync();
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        autoSaveCts?.Cancel();
+        autoSaveTimer?.Dispose();
+        autoSaveCts?.Dispose();
+        selfRef?.Dispose();
+
+        if (saveShortcutHandle is not null)
+        {
+            await saveShortcutHandle.DisposeAsync();
+        }
+
+        if (notesModule is not null)
+        {
+            await notesModule.DisposeAsync();
+        }
+    }
+
+    private async Task LoadDaysAsync()
+    {
+        try
+        {
+            days = await Api.GetNoteDaysAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task LoadNoteForDateAsync(DateTime date)
+    {
+        busy = true;
+        error = null;
+        statusMessage = "Loading...";
+
+        try
+        {
+            var match = days.FirstOrDefault(day => day.CreatedAt.ToLocalTime().Date == date.Date);
+            if (match is null)
+            {
+                noteId = 0;
+                markdown = "";
+                compiledHtml = "";
+                dirty = false;
+                isEditing = false;
+                statusMessage = "New note";
+                return;
+            }
+
+            noteId = match.Id;
+            var note = await Api.GetNoteAsync(noteId);
+            markdown = note?.MarkDownContents ?? "";
+            compiledHtml = note?.CompiledHtml ?? "";
+            dirty = false;
+            isEditing = false;
+            statusMessage = "Loaded";
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            statusMessage = "Load failed";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task SaveAsync(bool returnToPreview)
+    {
+        if (busy)
+        {
+            return;
+        }
+
+        busy = true;
+        error = null;
+        statusMessage = "Saving...";
+
+        try
+        {
+            var createdAt = new DateTimeOffset(selectedDate.Date, TimeZoneInfo.Local.GetUtcOffset(selectedDate.Date));
+            var request = new SaveNoteRequest(createdAt, createdAt.UtcTicks, markdown);
+            var saved = await Api.SaveNoteAsync(noteId, request);
+            noteId = saved.Id;
+            compiledHtml = saved.CompiledHtml;
+            dirty = false;
+            statusMessage = "Saved";
+            await LoadDaysAsync();
+            if (returnToPreview)
+            {
+                isEditing = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            statusMessage = "Save failed";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private void OnMarkdownChanged(string value)
+    {
+        markdown = value;
+        dirty = true;
+        statusMessage = "Editing";
+    }
+
+    private async Task OnDateChanged(ChangeEventArgs args)
+    {
+        if (DateTime.TryParseExact(args.Value?.ToString(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
+        {
+            selectedDate = parsed.Date;
+            await LoadNoteForDateAsync(selectedDate);
+        }
+    }
+
+    private async Task OnPreviewClicked()
+    {
+        if (notesModule is null)
+        {
+            isEditing = true;
+            focusEditorOnRender = true;
+            return;
+        }
+
+        pendingScrollFraction = await notesModule.InvokeAsync<double>("getScrollFraction", previewPane);
+        isEditing = true;
+        focusEditorOnRender = true;
+    }
+
+    private void StartAutoSave()
+    {
+        autoSaveCts = new CancellationTokenSource();
+        autoSaveTimer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                while (await autoSaveTimer.WaitForNextTickAsync(autoSaveCts.Token))
+                {
+                    if (!dirty || busy)
+                    {
+                        continue;
+                    }
+
+                    await InvokeAsync(() => SaveAsync(returnToPreview: false));
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }, autoSaveCts.Token);
+    }
+
+    [JSInvokable]
+    public Task OnSaveShortcut()
+    {
+        return SaveAsync(returnToPreview: false);
+    }
+}

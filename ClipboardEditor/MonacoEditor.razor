@@ -85,6 +85,26 @@
         await ValueChanged.InvokeAsync(value);
     }
 
+    public async Task FocusAsync()
+    {
+        if (_module is null || _editor is null)
+        {
+            return;
+        }
+
+        await _module.InvokeVoidAsync("focusEditor", _editor);
+    }
+
+    public async Task ScrollToFractionAsync(double fraction)
+    {
+        if (_module is null || _editor is null)
+        {
+            return;
+        }
+
+        await _module.InvokeVoidAsync("setScrollFraction", _editor, fraction);
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (_module is not null && _editor is not null)

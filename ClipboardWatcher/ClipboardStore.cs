@@ -11,6 +11,8 @@ public record ClipboardTextEntry(int Id, string Content, DateTimeOffset CreatedA
 public record ClipboardImageEntry(int Id, byte[] Data, DateTimeOffset CreatedAt);
 public record HierarchyEntry(int Id, int? ParentId, string Name, DateTimeOffset CreatedAt);
 public record StoredTextEntry(int Id, int? HierarchyId, string Name, string Content, DateTimeOffset CreatedAt, string Language);
+public record NoteDayEntry(int Id, DateTimeOffset CreatedAt, long CreatedAtTicks);
+public record NoteEntry(int Id, DateTimeOffset CreatedAt, long CreatedAtTicks, string MarkDownContents, string CompiledHtml);
 
 public class ClipboardStore
 {
@@ -78,12 +80,20 @@ public class ClipboardStore
                 Language TEXT NOT NULL,
                 FOREIGN KEY (HierarchyId) REFERENCES Hierarchy(Id) ON DELETE SET NULL
             );
+            CREATE TABLE IF NOT EXISTS Notes(
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                CreatedAt TEXT NOT NULL,
+                CreatedAtTicks INTEGER NOT NULL,
+                MarkDownContents TEXT NOT NULL,
+                CompiledHtml TEXT NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS IX_TextEntries_CreatedAt ON TextEntries(CreatedAt DESC);
             CREATE INDEX IF NOT EXISTS IX_ImageEntries_CreatedAt ON ImageEntries(CreatedAt DESC);
             CREATE INDEX IF NOT EXISTS IX_Hierarchy_ParentId ON Hierarchy(ParentId);
             CREATE INDEX IF NOT EXISTS IX_Hierarchy_CreatedAt ON Hierarchy(CreatedAt DESC);
             CREATE INDEX IF NOT EXISTS IX_StoredTextEntries_HierarchyId ON StoredTextEntries(HierarchyId);
             CREATE INDEX IF NOT EXISTS IX_StoredTextEntries_CreatedAt ON StoredTextEntries(CreatedAt DESC);
+            CREATE INDEX IF NOT EXISTS IX_Notes_CreatedAtTicks ON Notes(CreatedAtTicks DESC);
             """;
         command.ExecuteNonQuery();
 
@@ -618,5 +628,92 @@ public class ClipboardStore
         cmd.Parameters.AddWithValue("$id", id);
         var rows = await cmd.ExecuteNonQueryAsync();
         return rows > 0;
+    }
+
+    public async Task<IReadOnlyList<NoteDayEntry>> ListNoteDaysAsync()
+    {
+        var results = new List<NoteDayEntry>();
+        await using var connection = await OpenConnectionAsync();
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT Id, CreatedAt, CreatedAtTicks FROM Notes ORDER BY CreatedAtTicks DESC;";
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            results.Add(new NoteDayEntry(
+                reader.GetInt32(0),
+                DateTimeOffset.Parse(reader.GetString(1), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
+                reader.GetInt64(2)));
+        }
+
+        return results;
+    }
+
+    public async Task<NoteEntry?> GetNoteAsync(int id)
+    {
+        await using var connection = await OpenConnectionAsync();
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT Id, CreatedAt, CreatedAtTicks, MarkDownContents, CompiledHtml FROM Notes WHERE Id = $id LIMIT 1;";
+        cmd.Parameters.AddWithValue("$id", id);
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        if (await reader.ReadAsync())
+        {
+            return new NoteEntry(
+                reader.GetInt32(0),
+                DateTimeOffset.Parse(reader.GetString(1), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
+                reader.GetInt64(2),
+                reader.GetString(3),
+                reader.GetString(4));
+        }
+
+        return null;
+    }
+
+    public async Task<NoteEntry> SaveNoteAsync(int id, DateTimeOffset createdAt, long createdAtTicks, string markDownContents, string compiledHtml)
+    {
+        await using var connection = await OpenConnectionAsync();
+        var normalizedMarkdown = markDownContents ?? string.Empty;
+        var normalizedHtml = compiledHtml ?? string.Empty;
+        var createdAtValue = createdAt.ToString("O", CultureInfo.InvariantCulture);
+
+        if (id > 0)
+        {
+            await using var update = connection.CreateCommand();
+            update.CommandText =
+                """
+                UPDATE Notes
+                SET CreatedAt = $createdAt,
+                    CreatedAtTicks = $createdAtTicks,
+                    MarkDownContents = $markdown,
+                    CompiledHtml = $html
+                WHERE Id = $id;
+                """;
+            update.Parameters.AddWithValue("$createdAt", createdAtValue);
+            update.Parameters.AddWithValue("$createdAtTicks", createdAtTicks);
+            update.Parameters.AddWithValue("$markdown", normalizedMarkdown);
+            update.Parameters.AddWithValue("$html", normalizedHtml);
+            update.Parameters.AddWithValue("$id", id);
+            var rows = await update.ExecuteNonQueryAsync();
+            if (rows > 0)
+            {
+                return new NoteEntry(id, createdAt, createdAtTicks, normalizedMarkdown, normalizedHtml);
+            }
+        }
+
+        await using var insert = connection.CreateCommand();
+        insert.CommandText =
+            """
+            INSERT INTO Notes(CreatedAt, CreatedAtTicks, MarkDownContents, CompiledHtml)
+            VALUES ($createdAt, $createdAtTicks, $markdown, $html);
+            SELECT last_insert_rowid();
+            """;
+        insert.Parameters.AddWithValue("$createdAt", createdAtValue);
+        insert.Parameters.AddWithValue("$createdAtTicks", createdAtTicks);
+        insert.Parameters.AddWithValue("$markdown", normalizedMarkdown);
+        insert.Parameters.AddWithValue("$html", normalizedHtml);
+        var newId = Convert.ToInt32(await insert.ExecuteScalarAsync());
+
+        return new NoteEntry(newId, createdAt, createdAtTicks, normalizedMarkdown, normalizedHtml);
     }
 }

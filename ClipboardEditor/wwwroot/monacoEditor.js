@@ -116,3 +116,24 @@ export function setReadOnly(editor, readOnly) {
 
   editor.updateOptions({ readOnly: !!readOnly });
 }
+
+export function focusEditor(editor) {
+  if (!editor) {
+    return;
+  }
+
+  editor.focus();
+}
+
+export function setScrollFraction(editor, fraction) {
+  if (!editor) {
+    return;
+  }
+
+  const clamped = Math.max(0, Math.min(1, Number(fraction) || 0));
+  const scrollHeight = editor.getScrollHeight();
+  const layout = editor.getLayoutInfo();
+  const viewportHeight = layout?.height ?? 1;
+  const maxScroll = Math.max(1, scrollHeight - viewportHeight);
+  editor.setScrollTop(Math.round(maxScroll * clamped));
+}
