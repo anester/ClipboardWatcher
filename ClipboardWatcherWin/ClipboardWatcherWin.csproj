@@ -14,6 +14,7 @@
     <ClipboardUiBuildDir>$(ClipboardUiProjectDir)bin\$(Configuration)\$(ClipboardUiTargetFramework)\</ClipboardUiBuildDir>
     <ClipboardUiBuildWwwRoot>$(ClipboardUiBuildDir)wwwroot\</ClipboardUiBuildWwwRoot>
     <ClipboardUiProjectWwwRoot>$(ClipboardUiProjectDir)wwwroot\</ClipboardUiProjectWwwRoot>
+    <ClipboardEditorWwwRoot>..\ClipboardEditor\wwwroot\</ClipboardEditorWwwRoot>
   </PropertyGroup>
 
   <ItemGroup>
@@ -33,6 +34,7 @@
       <_ClipboardUiProjectAsset Include="$(ClipboardUiProjectWwwRoot)**\*.*" />
       <_ClipboardUiFrameworkAsset Include="$(ClipboardUiBuildWwwRoot)_framework\**\*.*" />
       <_ClipboardUiScopedCss Include="$(ClipboardUiProjectDir)obj\**\scopedcss\bundle\ClipboardUi.styles.css" />
+      <_ClipboardEditorAsset Include="$(ClipboardEditorWwwRoot)**\*.*" />
     </ItemGroup>
 
     <Copy SourceFiles="@(_ClipboardUiProjectAsset)"
@@ -44,9 +46,12 @@
     <Copy SourceFiles="@(_ClipboardUiScopedCss)"
           DestinationFolder="$(TargetDir)clipboardui"
           SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_ClipboardEditorAsset)"
+          DestinationFolder="$(TargetDir)clipboardui\_content\ClipboardEditor\%(RecursiveDir)"
+          SkipUnchangedFiles="true" />
 
     <WriteLinesToFile File="$(TargetDir)clipboardui-assets.txt"
-                      Lines="@(_ClipboardUiProjectAsset->'%(RecursiveDir)%(Filename)%(Extension)');@(_ClipboardUiFrameworkAsset->'_framework/%(RecursiveDir)%(Filename)%(Extension)');@(_ClipboardUiScopedCss->'ClipboardUi.styles.css')"
+                      Lines="@(_ClipboardUiProjectAsset->'%(RecursiveDir)%(Filename)%(Extension)');@(_ClipboardUiFrameworkAsset->'_framework/%(RecursiveDir)%(Filename)%(Extension)');@(_ClipboardUiScopedCss->'ClipboardUi.styles.css');@(_ClipboardEditorAsset->'_content/ClipboardEditor/%(RecursiveDir)%(Filename)%(Extension)')"
                       Overwrite="true"
                       Encoding="UTF-8" />
   </Target>
