@@ -137,3 +137,47 @@ export function setScrollFraction(editor, fraction) {
   const maxScroll = Math.max(1, scrollHeight - viewportHeight);
   editor.setScrollTop(Math.round(maxScroll * clamped));
 }
+
+export function insertText(editor, text) {
+  if (!editor) {
+    return;
+  }
+
+  const model = editor.getModel();
+  const selection = editor.getSelection();
+  if (!model || !selection) {
+    return;
+  }
+
+  editor.executeEdits("insert-text", [
+    {
+      range: selection,
+      text: text ?? "",
+      forceMoveMarkers: true
+    }
+  ]);
+  editor.focus();
+}
+
+export function wrapSelection(editor, prefix, suffix) {
+  if (!editor) {
+    return;
+  }
+
+  const model = editor.getModel();
+  const selection = editor.getSelection();
+  if (!model || !selection) {
+    return;
+  }
+
+  const selected = model.getValueInRange(selection);
+  const text = `${prefix ?? ""}${selected}${suffix ?? ""}`;
+  editor.executeEdits("wrap-selection", [
+    {
+      range: selection,
+      text,
+      forceMoveMarkers: true
+    }
+  ]);
+  editor.focus();
+}

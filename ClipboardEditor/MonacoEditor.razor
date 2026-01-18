@@ -105,6 +105,26 @@
         await _module.InvokeVoidAsync("setScrollFraction", _editor, fraction);
     }
 
+    public async Task InsertTextAsync(string text)
+    {
+        if (_module is null || _editor is null)
+        {
+            return;
+        }
+
+        await _module.InvokeVoidAsync("insertText", _editor, text ?? string.Empty);
+    }
+
+    public async Task WrapSelectionAsync(string prefix, string suffix)
+    {
+        if (_module is null || _editor is null)
+        {
+            return;
+        }
+
+        await _module.InvokeVoidAsync("wrapSelection", _editor, prefix ?? string.Empty, suffix ?? string.Empty);
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (_module is not null && _editor is not null)

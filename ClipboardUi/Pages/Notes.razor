@@ -23,6 +23,47 @@
                    disabled="@busy" />
         </div>
         <div class="ms-auto d-flex gap-2 align-items-center">
+            @if (isEditing)
+            {
+                <div class="btn-toolbar" role="toolbar" aria-label="Markdown toolbar">
+                    <div class="btn-group btn-group-sm me-2" role="group">
+                        <button class="btn btn-outline-secondary" @onclick="InsertBoldAsync" disabled="@busy">Bold</button>
+                        <button class="btn btn-outline-secondary" @onclick="InsertItalicAsync" disabled="@busy">Italic</button>
+                        <button class="btn btn-outline-secondary" @onclick="@(() => InsertHeadingAsync(1))" disabled="@busy">H1</button>
+                        <button class="btn btn-outline-secondary" @onclick="@(() => InsertHeadingAsync(2))" disabled="@busy">H2</button>
+                        <button class="btn btn-outline-secondary" @onclick="InsertInlineCodeAsync" disabled="@busy">Code</button>
+                        <button class="btn btn-outline-secondary" @onclick="InsertQuoteAsync" disabled="@busy">Quote</button>
+                        <button class="btn btn-outline-secondary" @onclick="InsertListAsync" disabled="@busy">List</button>
+                        <button class="btn btn-outline-secondary" @onclick="InsertTodoAsync" disabled="@busy">Todo</button>
+                        <button class="btn btn-outline-secondary" @onclick="InsertLinkAsync" disabled="@busy">Link</button>
+                    </div>
+                    <div class="btn-group btn-group-sm" role="group">
+                        <button class="btn btn-outline-secondary" @onclick="ToggleTablePicker" disabled="@busy">Table</button>
+                    </div>
+                </div>
+                @if (showTablePicker)
+                {
+                    <div class="position-relative">
+                        <div class="border rounded p-2 bg-white shadow"
+                             style="position:absolute; right:0; top:8px; z-index:10;">
+                            <div class="small text-muted mb-2">@hoverTableRows x @hoverTableCols</div>
+                            <div style="display:grid; grid-template-columns: repeat(10, 18px); gap: 4px;">
+                                @for (var row = 1; row <= 10; row++)
+                                {
+                                    @for (var col = 1; col <= 10; col++)
+                                    {
+                                        var active = row <= hoverTableRows && col <= hoverTableCols;
+                                        <div style="@GetTableCellStyle(active)"
+                                             @onmouseover="() => UpdateTableHover(row, col)"
+                                             @onclick="() => InsertTableAsync(row, col)">
+                                        </div>
+                                    }
+                                }
+                            </div>
+                        </div>
+                    </div>
+                }
+            }
             <span class="text-muted">@statusMessage</span>
         </div>
     </div>
@@ -75,6 +116,9 @@
     private MonacoEditor? editor;
     private double? pendingScrollFraction;
     private bool focusEditorOnRender;
+    private bool showTablePicker;
+    private int hoverTableRows = 2;
+    private int hoverTableCols = 2;
 
     private string SelectedDateString => selectedDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
@@ -200,6 +244,7 @@
             if (returnToPreview)
             {
                 isEditing = false;
+                showTablePicker = false;
             }
         }
         catch (Exception ex)
@@ -220,6 +265,46 @@
         statusMessage = "Editing";
     }
 
+    private async Task InsertTextAsync(string text)
+    {
+        if (editor is null)
+        {
+            return;
+        }
+
+        await editor.InsertTextAsync(text);
+    }
+
+    private async Task WrapSelectionAsync(string prefix, string suffix)
+    {
+        if (editor is null)
+        {
+            return;
+        }
+
+        await editor.WrapSelectionAsync(prefix, suffix);
+    }
+
+    private Task InsertBoldAsync() => WrapSelectionAsync("**", "**");
+
+    private Task InsertItalicAsync() => WrapSelectionAsync("*", "*");
+
+    private Task InsertInlineCodeAsync() => WrapSelectionAsync("`", "`");
+
+    private Task InsertLinkAsync() => WrapSelectionAsync("[", "](url)");
+
+    private Task InsertHeadingAsync(int level)
+    {
+        var hashes = new string('#', Math.Clamp(level, 1, 6));
+        return InsertTextAsync($"{hashes} ");
+    }
+
+    private Task InsertQuoteAsync() => InsertTextAsync("> ");
+
+    private Task InsertListAsync() => InsertTextAsync("- ");
+
+    private Task InsertTodoAsync() => InsertTextAsync("- [ ] ");
+
     private async Task OnDateChanged(ChangeEventArgs args)
     {
         if (DateTime.TryParseExact(args.Value?.ToString(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
@@ -231,6 +316,7 @@
 
     private async Task OnPreviewClicked()
     {
+        showTablePicker = false;
         if (notesModule is null)
         {
             isEditing = true;
@@ -241,6 +327,44 @@
         pendingScrollFraction = await notesModule.InvokeAsync<double>("getScrollFraction", previewPane);
         isEditing = true;
         focusEditorOnRender = true;
+    }
+
+    private void ToggleTablePicker()
+    {
+        showTablePicker = !showTablePicker;
+    }
+
+    private void UpdateTableHover(int rows, int cols)
+    {
+        hoverTableRows = rows;
+        hoverTableCols = cols;
+    }
+
+    private async Task InsertTableAsync(int rows, int cols)
+    {
+        if (rows <= 0 || cols <= 0)
+        {
+            return;
+        }
+
+        var header = "| " + string.Join(" | ", System.Linq.Enumerable.Repeat("Header", cols)) + " |";
+        var separator = "| " + string.Join(" | ", System.Linq.Enumerable.Repeat("---", cols)) + " |";
+        var body = string.Join(Environment.NewLine,
+            System.Linq.Enumerable.Range(0, rows - 1)
+                .Select(_ => "| " + string.Join(" | ", System.Linq.Enumerable.Repeat(" ", cols)) + " |"));
+
+        var table = rows > 1
+            ? string.Join(Environment.NewLine, header, separator, body)
+            : string.Join(Environment.NewLine, header, separator);
+
+        await InsertTextAsync(table + Environment.NewLine);
+        showTablePicker = false;
+    }
+
+    private static string GetTableCellStyle(bool active)
+    {
+        var background = active ? "#0d6efd33" : "#ffffff";
+        return $"width:18px; height:18px; border:1px solid #ced4da; background:{background};";
     }
 
     private void StartAutoSave()
