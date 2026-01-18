@@ -13,7 +13,7 @@
 }
 
 <div class="d-flex flex-column" style="min-height: calc(100vh - 220px);">
-    <div class="d-flex flex-wrap align-items-end gap-2 mb-3">
+    <div class="d-flex flex-wrap align-items-end mb-3">
         <div style="min-width: 220px;">
             <label class="form-label">Day</label>
             <input class="form-control"
@@ -22,9 +22,9 @@
                    @oninput="OnDateChanged"
                    disabled="@busy" />
         </div>
-        <div class="ms-auto d-flex gap-2 align-items-center">
-            @if (isEditing)
-            {
+        @if (isEditing)
+        {
+            <div class="d-flex align-items-end" style="margin-left: 20px;">
                 <div class="btn-toolbar" role="toolbar" aria-label="Markdown toolbar">
                     <div class="btn-group btn-group-sm me-2" role="group">
                         <button class="btn btn-outline-secondary" @onclick="InsertBoldAsync" disabled="@busy">Bold</button>
@@ -45,17 +45,19 @@
                 {
                     <div class="position-relative">
                         <div class="border rounded p-2 bg-white shadow"
-                             style="position:absolute; right:0; top:8px; z-index:10;">
+                             style="position:absolute; left:0; top:8px; z-index:10;">
                             <div class="small text-muted mb-2">@hoverTableRows x @hoverTableCols</div>
                             <div style="display:grid; grid-template-columns: repeat(10, 18px); gap: 4px;">
                                 @for (var row = 1; row <= 10; row++)
                                 {
-                                    @for (var col = 1; col <= 10; col++)
+                                    var currentRow = row;
+                                    for (var col = 1; col <= 10; col++)
                                     {
-                                        var active = row <= hoverTableRows && col <= hoverTableCols;
+                                        var currentCol = col;
+                                        var active = currentRow <= hoverTableRows && currentCol <= hoverTableCols;
                                         <div style="@GetTableCellStyle(active)"
-                                             @onmouseover="() => UpdateTableHover(row, col)"
-                                             @onclick="() => InsertTableAsync(row, col)">
+                                             @onmouseover="() => UpdateTableHover(currentRow, currentCol)"
+                                             @onclick="() => InsertTableAsync(currentRow, currentCol)">
                                         </div>
                                     }
                                 }
@@ -63,8 +65,17 @@
                         </div>
                     </div>
                 }
+            </div>
+        }
+        <div class="ms-auto d-flex align-items-center">
+            @if (isEditing)
+            {
+                <span class="text-muted">@statusMessage</span>
             }
-            <span class="text-muted">@statusMessage</span>
+            else
+            {
+                <span class="text-muted">@statusMessage</span>
+            }
         </div>
     </div>
 
