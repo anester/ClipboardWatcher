@@ -22,6 +22,20 @@
                    @oninput="OnDateChanged"
                    disabled="@busy" />
         </div>
+        <div style="min-width: 200px; margin-left: 20px;">
+            <label class="form-label">Days with notes</label>
+            <InputSelect class="form-select"
+                         @key="CurrentMonthDays.Count"
+                         @bind-Value="selectedNoteDayId"
+                         @bind-Value:after="OnNoteDaySelectedAsync"
+                         disabled="@(busy || CurrentMonthDays.Count == 0)">
+                <option value="">(This month)</option>
+                @foreach (var day in CurrentMonthDays)
+                {
+                    <option value="@day.Id">@GetDayLocalDate(day).ToString("MMM dd")</option>
+                }
+            </InputSelect>
+        </div>
         @if (isEditing)
         {
             <div class="d-flex align-items-end" style="margin-left: 20px;">
@@ -116,6 +130,7 @@
     private bool dirty;
     private string statusMessage = "";
     private bool isEditing;
+    private int? selectedNoteDayId;
 
     private DateTime selectedDate = DateTime.Today;
     private PeriodicTimer? autoSaveTimer;
@@ -132,6 +147,7 @@
     private int hoverTableCols = 2;
 
     private string SelectedDateString => selectedDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+    private List<NoteDayEntry> CurrentMonthDays => BuildCurrentMonthDays();
 
     protected override async Task OnInitializedAsync()
     {
@@ -185,6 +201,8 @@
         try
         {
             days = await Api.GetNoteDaysAsync();
+            StateHasChanged();
+            SyncSelectedNoteDayId();
         }
         catch (Exception ex)
         {
@@ -200,7 +218,7 @@
 
         try
         {
-            var match = days.FirstOrDefault(day => day.CreatedAt.ToLocalTime().Date == date.Date);
+            var match = days.FirstOrDefault(day => GetDayLocalDate(day) == date.Date);
             if (match is null)
             {
                 noteId = 0;
@@ -322,6 +340,20 @@
         {
             selectedDate = parsed.Date;
             await LoadNoteForDateAsync(selectedDate);
+            SyncSelectedNoteDayId();
+        }
+    }
+
+    private async Task OnNoteDaySelectedAsync()
+    {
+        if (selectedNoteDayId is { } id && id > 0)
+        {
+            var match = days.Find(day => day.Id == id);
+            if (match is not null)
+            {
+                selectedDate = GetDayLocalDate(match);
+                await LoadNoteForDateAsync(selectedDate);
+            }
         }
     }
 
@@ -378,6 +410,42 @@
         return $"width:18px; height:18px; border:1px solid #ced4da; background:{background};";
     }
 
+    private List<NoteDayEntry> BuildCurrentMonthDays()
+    {
+        var results = new List<NoteDayEntry>();
+        var monthStart = new DateTime(selectedDate.Year, selectedDate.Month, 1);
+        var monthEnd = monthStart.AddMonths(1);
+        var seen = new HashSet<DateTime>();
+
+        foreach (var day in days)
+        {
+            var localDate = GetDayLocalDate(day);
+            if (localDate < monthStart || localDate >= monthEnd)
+            {
+                continue;
+            }
+
+            if (seen.Add(localDate))
+            {
+                results.Add(day);
+            }
+        }
+
+        results.Sort((left, right) =>
+            GetDayLocalDate(left).CompareTo(GetDayLocalDate(right)));
+        return results;
+    }
+
+    private static DateTime GetDayLocalDate(NoteDayEntry day)
+    {
+        if (day.CreatedAtTicks > 0)
+        {
+            return new DateTime(day.CreatedAtTicks, DateTimeKind.Utc).ToLocalTime().Date;
+        }
+
+        return day.CreatedAt.ToLocalTime().Date;
+    }
+
     private void StartAutoSave()
     {
         autoSaveCts = new CancellationTokenSource();
@@ -406,5 +474,11 @@
     public Task OnSaveShortcut()
     {
         return SaveAsync(returnToPreview: false);
+    }
+
+    private void SyncSelectedNoteDayId()
+    {
+        var match = CurrentMonthDays.Find(day => GetDayLocalDate(day) == selectedDate.Date);
+        selectedNoteDayId = match?.Id;
     }
 }
